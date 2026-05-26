@@ -109,7 +109,10 @@ export async function POST(req: NextRequest) {
       messages: filtered,
       preview: filtered.slice(0, 12),
     };
-    return NextResponse.json(response);
+    // Surface source_coverage (full/partial/empty) at the top level so the
+    // front-end / verification can observe data completeness, not just inference
+    // it from blocked_reasons. (Additive field; LabReadResponse stays unchanged.)
+    return NextResponse.json({ ...response, source_coverage: fetched.source_coverage });
   } catch (e) {
     const message = e instanceof Error ? e.message : 'unknown error';
     console.error('/api/lab/read failed', e);

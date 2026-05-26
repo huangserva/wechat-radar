@@ -14,6 +14,8 @@ import {
   CheckSquare,
   BookOpen,
   Flame,
+  Users,
+  CalendarClock,
 } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
 
@@ -122,11 +124,25 @@ export default function Sidebar() {
           active={pathname === '/commitments'}
         />
         <NavItem
+          href="/people"
+          icon={<Users size={15} />}
+          label="人物驾驶舱"
+          badge="Top"
+          active={pathname === '/people'}
+        />
+        <NavItem
           href="/knowledge"
           icon={<BookOpen size={15} />}
           label="知识库"
           badge="KB"
           active={pathname === '/knowledge'}
+        />
+        <NavItem
+          href="/reviews"
+          icon={<CalendarClock size={15} />}
+          label="复盘"
+          badge="Week"
+          active={pathname === '/reviews'}
         />
         <NavItem
           href="/lab"
