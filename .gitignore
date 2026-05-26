@@ -38,6 +38,7 @@ tsconfig.tsbuildinfo
 
 # agent/private workflow metadata
 .beads/
+.hive/
 CLAUDE.md
 AGENTS.md
 
