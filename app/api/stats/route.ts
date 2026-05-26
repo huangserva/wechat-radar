@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { wxSessions, wxStatsRangeWithMeta } from '@/lib/wx';
-import type { WxSession, WxSource, WxEmptyReason } from '@/lib/wx-types';
+import type { WxSession, WxSource, WxEmptyReason, WxResult } from '@/lib/wx-types';
+import type { WxStatsRangeRow } from '@/lib/wechat-db-adapter';
 import { listCachedStatsRange } from '@/lib/stats-aggregator';
 import { listAllTags, listGroups, listFavorites } from '@/lib/groups';
 import { effectiveGroupIds } from '@/lib/group-classifier';
@@ -25,21 +26,42 @@ export async function GET(req: NextRequest) {
   const groupNames = new Map(groups.map((g) => [g.username, g.chat]));
   const allCount = groups.length;
 
-  let cached = listCachedStatsRange(w.since, w.until);
-  let totalMessages = cached.reduce((sum, r) => sum + r.total, 0);
-  let dataSource: WxSource = totalMessages > 0 ? 'local' : 'none';
-  let emptyReason: WxEmptyReason = totalMessages > 0 ? null : 'no_match';
-  if (!readConfig().demoMode && totalMessages === 0) {
-    const live = await wxStatsRangeWithMeta(w.since, w.until).catch(
-      () => ({ data: [], source: 'none' as WxSource, empty_reason: 'no_match' as WxEmptyReason }),
-    );
-    dataSource = live.source;
-    emptyReason = live.empty_reason;
+  // P0.2: radar.db daily_stats is a sparse/partial sync cache in db mode (early
+  // sync / demo residue) — it must NOT mask the full collector. So in db/wx mode
+  // aggregate the live source FIRST (collectorOnly skips the ~15s raw scan; the
+  // collector alone has all ~1.7k groups), cache it per-window 60s, and only fall
+  // back to the local cache when the live source is genuinely empty. demo mode
+  // keeps reading radar.db (that's where seeded demo data lives).
+  const cfg = readConfig();
+  let cached: WxStatsRangeRow[] = [];
+  let dataSource: WxSource = 'none';
+  let emptyReason: WxEmptyReason = 'no_match';
+
+  if (cfg.demoMode) {
+    cached = listCachedStatsRange(w.since, w.until);
+    dataSource = cached.length > 0 ? 'local' : 'none';
+    emptyReason = cached.length > 0 ? null : 'no_match';
+  } else {
+    const ck = CK.statsRange(w.since, w.until);
+    let live = cache.get(ck) as WxResult<WxStatsRangeRow[]> | undefined;
+    if (!live) {
+      live = await wxStatsRangeWithMeta(w.since, w.until, { collectorOnly: true }).catch(
+        () => ({ data: [], source: 'none' as WxSource, empty_reason: 'no_match' as WxEmptyReason }),
+      );
+      cache.set(ck, live, 60);
+    }
     if (live.data.length > 0) {
       cached = live.data;
-      totalMessages = cached.reduce((sum, r) => sum + r.total, 0);
+      dataSource = live.source;
+      emptyReason = live.empty_reason;
+    } else {
+      // Live source empty (collector missing) → fall back to local so the page isn't blank.
+      cached = listCachedStatsRange(w.since, w.until);
+      dataSource = cached.length > 0 ? 'local' : live.source;
+      emptyReason = cached.length > 0 ? null : live.empty_reason;
     }
   }
+  const totalMessages = cached.reduce((sum, r) => sum + r.total, 0);
 
   const dates = dateList(w.since, w.until);
   const trendByDate = new Map<string, number>(dates.map((d) => [d, 0]));

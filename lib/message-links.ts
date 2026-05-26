@@ -37,14 +37,52 @@ export function cleanUrl(raw: string): string {
     .trim();
 }
 
+// Share-attribution / tracking query params that do NOT identify the target
+// resource. Stripping them lets the same article shared with different
+// sharer_*/scene/clicktime/chksm tokens collapse to one canonical_url.
+const TRACKING_QUERY_PARAMS = new Set([
+  'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+  'sharer_shareinfo', 'sharer_shareinfo_first', 'sharer_sharetime', 'sharer_userid', 'sharer_appid',
+  'scene', 'ascene', 'subscene', 'clicktime', 'chksm', 'key', 'exportkey', 'pass_ticket',
+  'isappinstalled', 'snipping_id', 'snipping_uuid', 'poc_token', 'srcid', 'mpshare',
+  'wx_header', 'uin', 'sessionid', 'session_id', 'x5referer', 'fromtype',
+]);
+
+// For mp.weixin.qq.com /s? articles, only these params identify the article.
+const WECHAT_ARTICLE_CORE_PARAMS = ['__biz', 'mid', 'idx', 'sn'];
+
+function stripTrackingParams(u: URL): void {
+  if (u.hostname === 'mp.weixin.qq.com') {
+    // /s/<slug> — the slug fully identifies the article, drop the whole query.
+    if (/^\/s\/[^/]+/.test(u.pathname)) {
+      u.search = '';
+      return;
+    }
+    // /s?__biz=..&mid=..&idx=..&sn=.. — keep only the article-identifying core
+    // (drops scene/clicktime/chksm/t/sharer_* and re-orders deterministically).
+    const core = new URLSearchParams();
+    for (const k of WECHAT_ARTICLE_CORE_PARAMS) {
+      const v = u.searchParams.get(k);
+      if (v) core.set(k, v);
+    }
+    if ([...core.keys()].length > 0) {
+      u.search = core.toString();
+      return;
+    }
+    // no core params (unexpected) → fall through to generic stripping
+  }
+  for (const key of [...u.searchParams.keys()]) {
+    if (TRACKING_QUERY_PARAMS.has(key.toLowerCase())) u.searchParams.delete(key);
+  }
+  u.searchParams.sort();
+}
+
 export function normalizeUrl(raw: string): string | null {
   if (!raw || raw.includes('...') || raw.includes('…')) return null;
   try {
     const u = new URL(cleanUrl(raw));
     u.hash = '';
-    for (const key of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content']) {
-      u.searchParams.delete(key);
-    }
+    stripTrackingParams(u);
     return u.toString();
   } catch {
     return null;

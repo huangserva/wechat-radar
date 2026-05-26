@@ -11,4 +11,5 @@ export const CK = {
   daemon: () => 'daemon:status',
   stats: (chatroomId: string, since: string, until: string) =>
     `stats:${chatroomId}:${since}:${until}`,
+  statsRange: (since: string, until: string) => `stats-range:${since}:${until}`,
 } as const;

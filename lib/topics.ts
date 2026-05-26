@@ -1,7 +1,3 @@
-import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { db } from './db';
 import { wxSessions } from './wx';
 
@@ -11,9 +7,18 @@ const MAX_MESSAGE_LENGTH = 400;
 const MAX_MESSAGES_TO_PROCESS = 3000;
 const MAX_TOPICS_TO_SAVE = 30;
 const CODEX_CHUNK_SIZE = Number(process.env.WECHAT_RADAR_TOPIC_CHUNK_SIZE ?? 250);
-const CODEX_TIMEOUT_MS = Number(process.env.WECHAT_RADAR_CODEX_TIMEOUT_MS ?? 300_000);
-const CODEX_MODEL = process.env.WECHAT_RADAR_CODEX_MODEL;
 const TOPICS_PER_CHUNK = 12;
+
+// Topic aggregation LLM = openai-compatible (GLM). Defaults to the same env as
+// /lab (WECHAT_RADAR_LAB_*); WECHAT_RADAR_TOPIC_* overrides. Switched off the
+// codex CLI which exits 1 locally (same gpt-5/auth issue as /lab).
+const TOPIC_BASE_URL = process.env.WECHAT_RADAR_TOPIC_BASE_URL ?? process.env.WECHAT_RADAR_LAB_BASE_URL;
+const TOPIC_API_KEY = process.env.WECHAT_RADAR_TOPIC_API_KEY ?? process.env.WECHAT_RADAR_LAB_API_KEY;
+const TOPIC_MODEL = process.env.WECHAT_RADAR_TOPIC_MODEL ?? process.env.WECHAT_RADAR_LAB_MODEL ?? 'glm-4-flash';
+const TOPIC_MAX_TOKENS = Number(process.env.WECHAT_RADAR_TOPIC_MAX_TOKENS ?? 3000);
+const TOPIC_TIMEOUT_MS = Number(
+  process.env.WECHAT_RADAR_TOPIC_TIMEOUT_MS ?? process.env.WECHAT_RADAR_LAB_CODEX_TIMEOUT_MS ?? 180_000,
+);
 
 interface SourceMsg {
   chatroom_id: string;
@@ -126,30 +131,6 @@ function loadCandidateMessages(date: string): SourceMsg[] {
   return Array.from(seen.values());
 }
 
-const TOPIC_RESPONSE_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    topics: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          title: { type: 'string' },
-          summary: { type: 'string' },
-          message_ids: {
-            type: 'array',
-            items: { type: 'string' },
-          },
-        },
-        required: ['title', 'summary', 'message_ids'],
-      },
-    },
-  },
-  required: ['topics'],
-};
-
 function sourceId(m: SourceMsg): string {
   return `${m.chatroom_id}#${m.local_id}`;
 }
@@ -169,70 +150,78 @@ function parseJsonOutput<T>(raw: string): T {
     if (fenced) return JSON.parse(fenced[1]) as T;
     const obj = trimmed.match(/\{[\s\S]*\}/);
     if (obj) return JSON.parse(obj[0]) as T;
-    throw new Error('codex returned non-JSON');
+    throw new Error('topic LLM returned non-JSON');
   }
 }
 
-function runCodexJson<T>(prompt: string, timeoutMs = CODEX_TIMEOUT_MS): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const dir = mkdtempSync(join(tmpdir(), 'wechat-topics-'));
-    const schemaPath = join(dir, 'schema.json');
-    const outPath = join(dir, 'response.json');
-    writeFileSync(schemaPath, JSON.stringify(TOPIC_RESPONSE_SCHEMA), 'utf8');
+interface OpenAIChatResponse {
+  choices?: Array<{ message?: { content?: string } }>;
+  error?: { message?: string };
+}
 
-    const args = [
-      '-a',
-      'never',
-      'exec',
-      '--sandbox',
-      'read-only',
-      '--ephemeral',
-      '--ignore-rules',
-      '--output-schema',
-      schemaPath,
-      '--output-last-message',
-      outPath,
-    ];
-    if (CODEX_MODEL) args.push('--model', CODEX_MODEL);
-    args.push('-');
+/**
+ * Topic aggregation via openai-compatible (GLM) /chat/completions. Replaces the
+ * codex CLI runner (which exits 1 locally). Same JSON-only contract as before —
+ * the prompts already describe the `{topics:[...]}` shape; we just enforce
+ * response_format=json_object and unwrap a GLM `{answer:...}` wrapper if present.
+ */
+async function runTopicLlm<T>(prompt: string, timeoutMs = TOPIC_TIMEOUT_MS): Promise<T> {
+  if (!TOPIC_BASE_URL) {
+    throw new Error('WECHAT_RADAR_TOPIC_BASE_URL / WECHAT_RADAR_LAB_BASE_URL required for topic LLM');
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (TOPIC_API_KEY) headers.authorization = `Bearer ${TOPIC_API_KEY}`;
 
-    const proc = spawn(
-      'codex',
-      args,
-      { env: { ...process.env, NO_COLOR: '1' }, stdio: ['pipe', 'pipe', 'pipe'] },
-    );
-    let stdout = '';
-    let stderr = '';
-    const t = setTimeout(() => {
-      proc.kill('SIGTERM');
-      rmSync(dir, { recursive: true, force: true });
-      reject(new Error('codex CLI timeout'));
-    }, timeoutMs);
-    proc.stdout.on('data', (d) => (stdout += d.toString()));
-    proc.stderr.on('data', (d) => (stderr += d.toString()));
-    proc.on('error', (e) => {
-      clearTimeout(t);
-      rmSync(dir, { recursive: true, force: true });
-      reject(e);
+    const response = await fetch(`${TOPIC_BASE_URL.replace(/\/+$/, '')}/chat/completions`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers,
+      body: JSON.stringify({
+        model: TOPIC_MODEL,
+        messages: [
+          {
+            role: 'system',
+            content:
+              '你是微信群聊「话题雷达」聚合引擎。只输出符合用户要求的严格 JSON（根对象含 topics 数组），不要输出 markdown、解释或 answer/result 等包裹字段。',
+          },
+          { role: 'user', content: prompt },
+        ],
+        temperature: 0.2,
+        max_tokens: TOPIC_MAX_TOKENS,
+        response_format: { type: 'json_object' },
+      }),
     });
-    proc.on('close', (code) => {
-      clearTimeout(t);
-      try {
-        if (code !== 0) {
-          reject(new Error(`codex exit ${code}: ${stderr.slice(0, 800)}`));
-          return;
-        }
-        const raw = readFileSync(outPath, 'utf8') || stdout;
-        resolve(parseJsonOutput<T>(raw));
-      } catch (e) {
-        reject(e);
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    });
-    proc.stdin.write(prompt);
-    proc.stdin.end();
-  });
+
+    const text = await response.text();
+    let payload: OpenAIChatResponse | null = null;
+    try {
+      payload = text ? (JSON.parse(text) as OpenAIChatResponse) : null;
+    } catch {
+      payload = null;
+    }
+    if (!response.ok) {
+      throw new Error(`topic LLM request failed (${response.status}): ${payload?.error?.message || text.slice(0, 400)}`);
+    }
+    const content = payload?.choices?.[0]?.message?.content;
+    if (typeof content !== 'string' || !content.trim()) {
+      throw new Error('topic LLM response missing choices[0].message.content');
+    }
+    const parsed = parseJsonOutput<unknown>(content);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && 'answer' in parsed) {
+      const answer = (parsed as { answer: unknown }).answer;
+      if (typeof answer === 'string') return parseJsonOutput<T>(answer);
+      if (answer && typeof answer === 'object') return answer as T;
+    }
+    return parsed as T;
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') throw new Error('topic LLM timeout');
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function formatMessagesForPrompt(messages: SourceMsg[], groupNameMap: Map<string, string>): string {
@@ -357,19 +346,36 @@ async function aggregateWithCodex(
     type: 'llm',
     done: 0,
     total: chunks.length,
-    message: `Codex CLI 聚合 ${messages.length} 条消息…`,
+    message: `LLM 聚合 ${messages.length} 条消息…`,
   });
 
+  // Per-chunk resilient: a single chunk being rejected (e.g. GLM content-safety
+  // 400 on real chat content) must NOT abort the whole day — skip it and keep the
+  // topics from the chunks that did pass.
+  let skipped = 0;
   for (let i = 0; i < chunks.length; i++) {
-    const response = await runCodexJson<LlmTopicResponse>(
-      buildExtractionPrompt(date, chunks[i], groupNameMap, TOPICS_PER_CHUNK),
-    );
-    drafts.push(...(response.topics ?? []));
+    try {
+      const response = await runTopicLlm<LlmTopicResponse>(
+        buildExtractionPrompt(date, chunks[i], groupNameMap, TOPICS_PER_CHUNK),
+      );
+      drafts.push(...(response.topics ?? []));
+      onProgress?.({ type: 'llm', done: i + 1, total: chunks.length, message: `LLM 分批聚合 ${i + 1}/${chunks.length}` });
+    } catch (e) {
+      skipped += 1;
+      onProgress?.({
+        type: 'llm',
+        done: i + 1,
+        total: chunks.length,
+        message: `第 ${i + 1}/${chunks.length} 块跳过（${e instanceof Error ? e.message.slice(0, 80) : 'LLM 错误'}）`,
+      });
+    }
+  }
+  if (skipped > 0) {
     onProgress?.({
       type: 'llm',
-      done: i + 1,
+      done: chunks.length,
       total: chunks.length,
-      message: `Codex CLI 分批聚合 ${i + 1}/${chunks.length}`,
+      message: `${skipped}/${chunks.length} 块被 LLM 拒绝（多为敏感内容过滤），按可用块聚合`,
     });
   }
 
@@ -380,14 +386,21 @@ async function aggregateWithCodex(
       type: 'llm',
       done: chunks.length,
       total: chunks.length,
-      message: `Codex CLI 合并 ${drafts.length} 个话题草稿…`,
+      message: `LLM 合并 ${drafts.length} 个话题草稿…`,
     });
   }
 
-  const final =
-    chunks.length === 1
-      ? { topics: drafts }
-      : await runCodexJson<LlmTopicResponse>(buildMergePrompt(date, drafts, MAX_TOPICS_TO_SAVE));
+  let final: LlmTopicResponse;
+  if (chunks.length === 1) {
+    final = { topics: drafts };
+  } else {
+    try {
+      final = await runTopicLlm<LlmTopicResponse>(buildMergePrompt(date, drafts, MAX_TOPICS_TO_SAVE));
+    } catch {
+      // Merge rejected (content filter) → keep the unmerged drafts.
+      final = { topics: drafts.slice(0, MAX_TOPICS_TO_SAVE) };
+    }
+  }
 
   return normalizeTopics(final.topics ?? [], messageMap);
 }

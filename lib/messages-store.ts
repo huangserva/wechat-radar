@@ -1,5 +1,6 @@
 import { db } from './db';
 import { upsertLinksForMessage } from './message-links';
+import { normalizeMessageContent } from './normalize-message';
 import type { WxMessage } from './wx-types';
 
 export interface MessageRow extends WxMessage {
@@ -33,25 +34,30 @@ export function bulkInsertMessages(chatroomId: string, messages: WxMessage[]): n
   const tx = db().transaction((msgs: WxMessage[]) => {
     for (const m of msgs) {
       if (SYSTEM_TYPES.has(m.type) && REVOKE_RE.test(m.content)) continue;
+      const raw = m.content ?? '';
+      // Extract links from the RAW XML (URLs live in <appmsg><url>) BEFORE
+      // normalizing — normalization collapses appmsg XML to "[链接] 标题".
+      upsertLinksForMessage({
+        chatroom_id: chatroomId,
+        local_id: m.local_id,
+        sender: m.sender ?? '',
+        content: raw,
+        time: m.time ?? '',
+        timestamp: m.timestamp ?? 0,
+        date: dateOfMessage(m),
+      });
+      // Store a display-normalized form so group detail / topics / lab never see
+      // raw media/appmsg XML or the "<wxid>:\n" sender prefix.
       const r = stmt.run(
         chatroomId,
         m.local_id,
         m.sender ?? '',
-        m.content ?? '',
+        normalizeMessageContent(raw, m.type ?? ''),
         m.time ?? '',
         m.timestamp ?? 0,
         m.type ?? '',
         dateOfMessage(m),
       );
-      upsertLinksForMessage({
-        chatroom_id: chatroomId,
-        local_id: m.local_id,
-        sender: m.sender ?? '',
-        content: m.content ?? '',
-        time: m.time ?? '',
-        timestamp: m.timestamp ?? 0,
-        date: dateOfMessage(m),
-      });
       if (r.changes > 0) inserted++;
     }
   });

@@ -166,7 +166,11 @@ export async function wxStats(
   };
 }
 
-export async function wxStatsRange(since: string, until: string): Promise<WxResult<WxStatsRangeRow[]>> {
+export async function wxStatsRange(
+  since: string,
+  until: string,
+  opts: { collectorOnly?: boolean } = {},
+): Promise<WxResult<WxStatsRangeRow[]>> {
   const paths = wxDbPaths();
   const start = unixStartOfDay(since);
   const end = unixEndExclusive(until);
@@ -177,13 +181,13 @@ export async function wxStatsRange(since: string, until: string): Promise<WxResu
   // collector never captured (raw-only / unwatched groups) — without it a global
   // dashboard query silently drops those groups. Buckets present in collector are
   // NOT overwritten (avoids double-counting the same chat across both sources).
-  // NOTE: this only runs on the cold path (stats route calls it when radar.db has
-  // no cached stats); the raw scan is the known ~15s degraded cost.
+  // The raw scan is the known ~15s degraded cost, so the home dashboard passes
+  // collectorOnly=true (collector alone already dwarfs the sparse radar.db cache).
   const fromCollector = hasCollector ? readCollectorStatsRange(paths.collectorDb, start, end) : [];
   const collectorKeys = new Set(fromCollector.map((r) => statsRowKey(r)));
   const merged = [...fromCollector];
   let usedRaw = false;
-  if (hasRaw) {
+  if (hasRaw && !opts.collectorOnly) {
     for (const r of readDecryptedStatsRange(paths, start, end)) {
       if (collectorKeys.has(statsRowKey(r))) continue; // collector already covers it
       merged.push(r);

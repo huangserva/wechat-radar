@@ -130,12 +130,20 @@ export async function wxSearchMessagesWithMeta(q: string, limit = 10): Promise<W
   return liveResult<SearchHit[]>([]);
 }
 
-export async function wxStatsRange(since: string, until: string): Promise<WxStatsRangeRow[]> {
-  return (await wxStatsRangeWithMeta(since, until)).data;
+export async function wxStatsRange(
+  since: string,
+  until: string,
+  opts?: { collectorOnly?: boolean },
+): Promise<WxStatsRangeRow[]> {
+  return (await wxStatsRangeWithMeta(since, until, opts)).data;
 }
 
-export async function wxStatsRangeWithMeta(since: string, until: string): Promise<WxResult<WxStatsRangeRow[]>> {
-  if (useDbAdapter()) return dbAdapter.wxStatsRange(since, until);
+export async function wxStatsRangeWithMeta(
+  since: string,
+  until: string,
+  opts?: { collectorOnly?: boolean },
+): Promise<WxResult<WxStatsRangeRow[]>> {
+  if (useDbAdapter()) return dbAdapter.wxStatsRange(since, until, opts);
   return liveResult<WxStatsRangeRow[]>([]);
 }
 

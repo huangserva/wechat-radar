@@ -1,7 +1,3 @@
-import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { db } from './db';
 import { wxSessions } from './wx';
 import { cache } from './cache';
@@ -11,9 +7,19 @@ const MAX_ITEMS_PER_KIND = 24;
 const MAX_TITLE_FETCHES = 8;
 const TITLE_FETCH_TIMEOUT_MS = 1400;
 const MAX_TITLE_GENERATION_ITEMS = 80;
-const CODEX_TIMEOUT_MS = Number(process.env.WECHAT_RADAR_LINK_CODEX_TIMEOUT_MS ?? 180_000);
-const CODEX_MODEL = process.env.WECHAT_RADAR_CODEX_MODEL;
-const LINK_INTELLIGENCE_CACHE_VERSION = 'v8';
+
+// Title/dedupe-key generation LLM = openai-compatible (GLM). Reuses the topic/lab
+// env. The previous codex CLI hung ~180s then failed locally (same gpt-5/auth
+// issue as /lab + /topics) and produced no titles → garbage fallback labels.
+const LINK_LLM_BASE_URL = process.env.WECHAT_RADAR_TOPIC_BASE_URL ?? process.env.WECHAT_RADAR_LAB_BASE_URL;
+const LINK_LLM_API_KEY = process.env.WECHAT_RADAR_TOPIC_API_KEY ?? process.env.WECHAT_RADAR_LAB_API_KEY;
+const LINK_LLM_MODEL = process.env.WECHAT_RADAR_TOPIC_MODEL ?? process.env.WECHAT_RADAR_LAB_MODEL ?? 'glm-4-flash';
+const LINK_LLM_MAX_TOKENS = Number(process.env.WECHAT_RADAR_LINK_MAX_TOKENS ?? 2400);
+const LINK_LLM_TIMEOUT_MS = Number(
+  process.env.WECHAT_RADAR_LINK_LLM_TIMEOUT_MS ?? process.env.WECHAT_RADAR_LAB_CODEX_TIMEOUT_MS ?? 120_000,
+);
+const LINK_TITLE_BATCH_SIZE = Number(process.env.WECHAT_RADAR_LINK_BATCH_SIZE ?? 40);
+const LINK_INTELLIGENCE_CACHE_VERSION = 'v9';
 const LINK_INTELLIGENCE_CACHE_TTL_SECONDS = 60 * 60 * 24;
 
 const TOOL_HINT_RE =
@@ -114,27 +120,6 @@ interface GeneratedLinkTitle {
 interface GeneratedLinkTitleResponse {
   items: GeneratedLinkTitle[];
 }
-
-const LINK_TITLE_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    items: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          canonical_url: { type: 'string' },
-          title: { type: 'string' },
-          group_key: { type: 'string' },
-        },
-        required: ['canonical_url', 'title', 'group_key'],
-      },
-    },
-  },
-  required: ['items'],
-};
 
 function decodeHtmlEntities(s: string): string {
   return s
@@ -291,66 +276,70 @@ function parseJsonOutput<T>(raw: string): T {
     if (fenced) return JSON.parse(fenced[1]) as T;
     const obj = trimmed.match(/\{[\s\S]*\}/);
     if (obj) return JSON.parse(obj[0]) as T;
-    throw new Error('codex returned non-JSON');
+    throw new Error('link LLM returned non-JSON');
   }
 }
 
-function runCodexJson<T>(prompt: string, schema: unknown, timeoutMs = CODEX_TIMEOUT_MS): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const dir = mkdtempSync(join(tmpdir(), 'wechat-links-'));
-    const schemaPath = join(dir, 'schema.json');
-    const outPath = join(dir, 'response.json');
-    writeFileSync(schemaPath, JSON.stringify(schema), 'utf8');
+interface OpenAIChatResponse {
+  choices?: Array<{ message?: { content?: string } }>;
+  error?: { message?: string };
+}
 
-    const args = [
-      '-a',
-      'never',
-      'exec',
-      '--sandbox',
-      'read-only',
-      '--ephemeral',
-      '--ignore-rules',
-      '--output-schema',
-      schemaPath,
-      '--output-last-message',
-      outPath,
-    ];
-    if (CODEX_MODEL) args.push('--model', CODEX_MODEL);
-    args.push('-');
-
-    const proc = spawn('codex', args, {
-      env: { ...process.env, NO_COLOR: '1' },
-      stdio: ['pipe', 'ignore', 'pipe'],
+/**
+ * Link title/dedupe generation via openai-compatible (GLM) /chat/completions.
+ * Replaces the codex CLI (hung ~180s then failed locally). Uses
+ * response_format=json_object and unwraps a GLM `{answer:...}` wrapper if present.
+ */
+async function runLinkLlm<T>(prompt: string, timeoutMs = LINK_LLM_TIMEOUT_MS): Promise<T> {
+  if (!LINK_LLM_BASE_URL) {
+    throw new Error('WECHAT_RADAR_TOPIC_BASE_URL / WECHAT_RADAR_LAB_BASE_URL required for link LLM');
+  }
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${LINK_LLM_BASE_URL.replace(/\/+$/, '')}/chat/completions`, {
+      method: 'POST',
+      signal: ctl.signal,
+      headers: {
+        'content-type': 'application/json',
+        ...(LINK_LLM_API_KEY ? { authorization: `Bearer ${LINK_LLM_API_KEY}` } : {}),
+      },
+      body: JSON.stringify({
+        model: LINK_LLM_MODEL,
+        messages: [
+          { role: 'system', content: '你是微信群链接情报的标题整理器。只输出严格 JSON。' },
+          { role: 'user', content: prompt },
+        ],
+        temperature: 0.2,
+        max_tokens: LINK_LLM_MAX_TOKENS,
+        response_format: { type: 'json_object' },
+      }),
     });
-    let stderr = '';
-    const t = setTimeout(() => {
-      proc.kill('SIGTERM');
-      rmSync(dir, { recursive: true, force: true });
-      reject(new Error('codex CLI timeout'));
-    }, timeoutMs);
-    proc.stderr.on('data', (d) => (stderr += d.toString()));
-    proc.on('error', (e) => {
-      clearTimeout(t);
-      rmSync(dir, { recursive: true, force: true });
-      reject(e);
-    });
-    proc.on('close', (code) => {
-      clearTimeout(t);
-      try {
-        if (code !== 0) {
-          reject(new Error(`codex exit ${code}: ${stderr.slice(0, 800)}`));
-          return;
-        }
-        resolve(parseJsonOutput<T>(readFileSync(outPath, 'utf8')));
-      } catch (e) {
-        reject(e);
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    });
-    proc.stdin.write(prompt);
-    proc.stdin.end();
-  });
+    const text = await response.text();
+    let payload: OpenAIChatResponse | null = null;
+    try {
+      payload = JSON.parse(text) as OpenAIChatResponse;
+    } catch {
+      payload = null;
+    }
+    if (!response.ok) {
+      throw new Error(`link LLM request failed (${response.status}): ${payload?.error?.message || text.slice(0, 400)}`);
+    }
+    const content = payload?.choices?.[0]?.message?.content;
+    if (!content) throw new Error('link LLM response missing choices[0].message.content');
+    const parsed = parseJsonOutput<unknown>(content);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && 'answer' in parsed) {
+      const answer = (parsed as { answer: unknown }).answer;
+      if (typeof answer === 'string') return parseJsonOutput<T>(answer);
+      return answer as T;
+    }
+    return parsed as T;
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') throw new Error('link LLM timeout');
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function fallbackDedupeKey(item: LinkIntelligenceItem): string {
@@ -393,24 +382,34 @@ ${rows}`;
 
 async function generateTitlesAndKeys(items: LinkIntelligenceItem[]) {
   if (items.length === 0) return;
-  try {
-    const response = await runCodexJson<GeneratedLinkTitleResponse>(
-      buildTitleGenerationPrompt(items),
-      LINK_TITLE_SCHEMA,
-    );
-    const byUrl = new Map(response.items.map((item) => [item.canonical_url, item]));
-    for (const item of items) {
-      const generated = byUrl.get(item.canonical_url);
-      if (!generated) {
-        item.dedupe_key = fallbackDedupeKey(item);
-        continue;
-      }
-      item.title = generated.title.trim().slice(0, 80) || item.title;
-      item.dedupe_key = generated.group_key.trim().toLowerCase() || fallbackDedupeKey(item);
-    }
-  } catch {
-    for (const item of items) item.dedupe_key = fallbackDedupeKey(item);
+  // Seed every item with a deterministic fallback key; the LLM overrides
+  // title/group_key per successfully-returned batch. A failed batch (timeout /
+  // content filter) keeps its fallback and never blocks the rest.
+  for (const item of items) item.dedupe_key = fallbackDedupeKey(item);
+  if (!LINK_LLM_BASE_URL) return;
+
+  const batches: LinkIntelligenceItem[][] = [];
+  for (let i = 0; i < items.length; i += LINK_TITLE_BATCH_SIZE) {
+    batches.push(items.slice(i, i + LINK_TITLE_BATCH_SIZE));
   }
+  // Batches are independent — run them concurrently. A failed batch (timeout /
+  // content filter) keeps its fallback keys and never blocks the others.
+  await Promise.all(
+    batches.map(async (batch) => {
+      try {
+        const response = await runLinkLlm<GeneratedLinkTitleResponse>(buildTitleGenerationPrompt(batch));
+        const byUrl = new Map((response.items ?? []).map((item) => [item.canonical_url, item]));
+        for (const item of batch) {
+          const generated = byUrl.get(item.canonical_url);
+          if (!generated) continue;
+          if (generated.title?.trim()) item.title = generated.title.trim().slice(0, 80);
+          if (generated.group_key?.trim()) item.dedupe_key = generated.group_key.trim().toLowerCase();
+        }
+      } catch {
+        // keep fallback keys for this batch
+      }
+    }),
+  );
 }
 
 function mergeDuplicateItems(items: LinkIntelligenceItem[]): LinkIntelligenceItem[] {
