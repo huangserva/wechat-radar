@@ -160,6 +160,8 @@ function migrate(d: Database.Database) {
     );
   `);
 
+  migrateLabTables(d);
+
   ensureColumn(d, 'sync_state', 'status', "TEXT NOT NULL DEFAULT 'unknown'");
   ensureColumn(d, 'sync_state', 'last_error', 'TEXT');
   ensureColumn(d, 'sync_state', 'failed_chunks', 'INTEGER NOT NULL DEFAULT 0');
@@ -176,6 +178,129 @@ function ensureColumn(
   const rows = d.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   if (rows.some((r) => r.name === name)) return;
   d.prepare(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`).run();
+}
+
+function tableExists(d: Database.Database, table: string): boolean {
+  return Boolean(
+    d.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table),
+  );
+}
+
+function hasColumn(d: Database.Database, table: string, column: string): boolean {
+  const rows = d.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  return rows.some((r) => r.name === column);
+}
+
+// Single source of truth for the lab schema — used both for fresh creation and
+// for the rebuild path below.
+const LAB_TABLES_DDL = `
+  CREATE TABLE IF NOT EXISTS conversation_lab_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cache_key TEXT NOT NULL UNIQUE,
+    mode TEXT NOT NULL,
+    chatroom_id TEXT NOT NULL,
+    chat_name TEXT,
+    target_wxid TEXT,
+    target_display_name TEXT NOT NULL,
+    target_resolution_json TEXT NOT NULL,
+    since TEXT NOT NULL,
+    until TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    source TEXT NOT NULL,
+    source_message_hash TEXT NOT NULL,
+    dimensions_hash TEXT NOT NULL,
+    compression_version TEXT NOT NULL,
+    compression_json TEXT NOT NULL,
+    profile_context_used INTEGER NOT NULL DEFAULT 0,
+    summary TEXT NOT NULL,
+    model_reading TEXT NOT NULL,
+    avg_score INTEGER NOT NULL DEFAULT 0,
+    detail_count INTEGER NOT NULL DEFAULT 0,
+    risk_count INTEGER NOT NULL DEFAULT 0,
+    confidence TEXT NOT NULL CHECK (confidence IN ('low', 'medium', 'high')),
+    highlights_json TEXT NOT NULL DEFAULT '[]',
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_lab_runs_chatroom ON conversation_lab_runs(chatroom_id, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS conversation_lab_dimensions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    name TEXT NOT NULL,
+    score INTEGER NOT NULL CHECK (score >= 0 AND score <= 100),
+    level TEXT NOT NULL CHECK (level IN ('低', '中', '高')),
+    basis TEXT NOT NULL,
+    icon TEXT,
+    evidence_json TEXT NOT NULL DEFAULT '{}',
+    FOREIGN KEY (run_id) REFERENCES conversation_lab_runs(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_lab_dimensions_run_id ON conversation_lab_dimensions(run_id);
+
+  CREATE TABLE IF NOT EXISTS conversation_lab_details (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL,
+    content TEXT NOT NULL,
+    severity TEXT NOT NULL CHECK (severity IN ('信息', '提醒', '风险')),
+    evidence_json TEXT NOT NULL DEFAULT '{}',
+    FOREIGN KEY (run_id) REFERENCES conversation_lab_runs(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_lab_details_run_id ON conversation_lab_details(run_id);
+`;
+
+// Required columns for conversation_lab_runs, used to evolve older tables in place.
+const LAB_RUNS_COLUMNS: Array<[string, string]> = [
+  ['target_resolution_json', "TEXT NOT NULL DEFAULT '{}'"],
+  ['source', "TEXT NOT NULL DEFAULT ''"],
+  ['source_message_hash', "TEXT NOT NULL DEFAULT ''"],
+  ['dimensions_hash', "TEXT NOT NULL DEFAULT ''"],
+  ['compression_version', "TEXT NOT NULL DEFAULT ''"],
+  ['compression_json', "TEXT NOT NULL DEFAULT '{}'"],
+  ['profile_context_used', 'INTEGER NOT NULL DEFAULT 0'],
+  ['model_reading', "TEXT NOT NULL DEFAULT ''"],
+  ['avg_score', 'INTEGER NOT NULL DEFAULT 0'],
+  ['detail_count', 'INTEGER NOT NULL DEFAULT 0'],
+  ['risk_count', 'INTEGER NOT NULL DEFAULT 0'],
+  ['highlights_json', "TEXT NOT NULL DEFAULT '[]'"],
+  ['prompt_version', "TEXT NOT NULL DEFAULT ''"],
+];
+
+/**
+ * Explicit, evolvable migration for the conversation_lab_* tables. Fresh installs
+ * get the full schema; older tables are evolved in place via ensureColumn (and
+ * re-assert indexes). A structurally-incompatible legacy table (pre-UNIQUE, no
+ * cache_key) is rebuilt only when empty; if it holds data we keep it and warn
+ * rather than risk losing rows.
+ */
+function migrateLabTables(d: Database.Database) {
+  // Structural incompatibility check BEFORE create (so an empty legacy table is
+  // dropped and then recreated fresh by the DDL below).
+  if (tableExists(d, 'conversation_lab_runs') && !hasColumn(d, 'conversation_lab_runs', 'cache_key')) {
+    const count = (d.prepare('SELECT COUNT(*) AS n FROM conversation_lab_runs').get() as { n: number }).n;
+    if (count === 0) {
+      d.exec(
+        `DROP TABLE IF EXISTS conversation_lab_details;
+         DROP TABLE IF EXISTS conversation_lab_dimensions;
+         DROP TABLE IF EXISTS conversation_lab_runs;`,
+      );
+    } else if (process.env.NODE_ENV !== 'production') {
+      console.warn(
+        '[db] conversation_lab_runs is on an incompatible legacy schema and is non-empty; manual migration required.',
+      );
+    }
+  }
+
+  d.exec(LAB_TABLES_DDL);
+
+  // Evolve older runs tables that predate columns added later (additive, safe).
+  if (tableExists(d, 'conversation_lab_runs') && hasColumn(d, 'conversation_lab_runs', 'cache_key')) {
+    for (const [name, def] of LAB_RUNS_COLUMNS) ensureColumn(d, 'conversation_lab_runs', name, def);
+  }
 }
 
 const SEED_VERSION = 'qiaomu_v2_2026_05_23';

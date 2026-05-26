@@ -57,6 +57,11 @@ export default function GroupDetailPage({
   const chatroomId = decodeURIComponent(id);
   const searchParams = useSearchParams();
   const requestedDate = searchParams.get('date');
+  const requestedLocalIdRaw = searchParams.get('local_id');
+  const requestedLocalId =
+    requestedLocalIdRaw && /^\d+$/.test(requestedLocalIdRaw)
+      ? Number(requestedLocalIdRaw)
+      : null;
 
   const today = useMemo(() => {
     const d = new Date();
@@ -72,6 +77,7 @@ export default function GroupDetailPage({
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [targetNotFound, setTargetNotFound] = useState(false);
 
   const load = async (d: string) => {
     setLoading(true);
@@ -95,6 +101,41 @@ export default function GroupDetailPage({
     queueMicrotask(() => void load(date));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatroomId, date]);
+
+  useEffect(() => {
+    if (!requestedLocalId) {
+      setTargetNotFound(false);
+      return;
+    }
+    if (loading || !data) return;
+
+    const exists = data.recent.some((m) => m.local_id === requestedLocalId);
+    if (!exists) {
+      setTargetNotFound(true);
+      return;
+    }
+
+    setTargetNotFound(false);
+    let cancelled = false;
+    let attempts = 0;
+    const timers: number[] = [];
+    const scrollToTarget = () => {
+      if (cancelled) return;
+      const target = document.querySelector<HTMLElement>(
+        `[data-local-id="${requestedLocalId}"]`,
+      );
+      target?.scrollIntoView({ behavior: 'auto', block: 'center' });
+      attempts += 1;
+      if (attempts < 5) timers.push(window.setTimeout(scrollToTarget, 180));
+    };
+    const raf = window.requestAnimationFrame(scrollToTarget);
+
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(raf);
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [data, loading, requestedLocalId]);
 
   useEffect(() => {
     if (requestedDate || !data || date !== today || (data.stats?.total ?? 0) > 0) return;
@@ -347,6 +388,11 @@ export default function GroupDetailPage({
                 </div>
               </div>
             </div>
+            {targetNotFound && (
+              <div className="border-b border-[var(--border-soft)] bg-[rgba(245,158,11,0.08)] px-5 py-2 text-[12px] text-[var(--warn)]">
+                未找到目标消息，可能不在当日或当前数据源。
+              </div>
+            )}
             {!loading && data?.recent && data.recent.length === 0 ? (
               <div className="py-12 text-center text-[12px] text-[var(--text-3)]">
                 当日无消息
@@ -356,7 +402,12 @@ export default function GroupDetailPage({
                 {(data?.recent ?? []).map((m) => (
                   <div
                     key={m.local_id}
-                    className="grid grid-cols-[120px_1fr_60px_70px] gap-3 px-5 py-2 text-[12px] hover:bg-[var(--surface-2)]"
+                    data-local-id={m.local_id}
+                    className={`grid scroll-mt-24 grid-cols-[120px_1fr_60px_70px] gap-3 px-5 py-2 text-[12px] transition-colors hover:bg-[var(--surface-2)] ${
+                      requestedLocalId === m.local_id
+                        ? 'border-l-2 border-[var(--accent)] bg-[rgba(125,211,168,0.14)] ring-1 ring-inset ring-[rgba(125,211,168,0.45)]'
+                        : 'border-l-2 border-transparent'
+                    }`}
                   >
                     <span className="truncate font-medium text-[var(--text)]">{m.sender}</span>
                     <div className="text-[var(--text-2)]">
