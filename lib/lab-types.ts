@@ -161,6 +161,31 @@ export interface LabCompressionMeta {
   };
 }
 
+export interface LabLlmTimingsMs {
+  prepare: number;
+  prompt: number;
+  provider: number;
+  validate: number;
+  total: number;
+}
+
+export interface LabAnalyzeTimingsMs {
+  request_parse?: number;
+  validate?: number;
+  prepare?: number;
+  profile?: number;
+  store?: number;
+  cache_lookup?: number;
+  llm_total?: number;
+  llm_prepare?: number;
+  llm_prompt?: number;
+  llm_provider?: number;
+  llm_validate?: number;
+  evidence?: number;
+  save?: number;
+  total: number;
+}
+
 export interface LabConsentMeta {
   accepted: boolean;
   provider: LabProvider;
@@ -277,8 +302,121 @@ export interface LabAnalysisResult {
 }
 
 export type LabAnalyzeResponse =
-  | { ok: true; cached: boolean; result: LabAnalysisResult; illegal_evidence_count: number }
+  | {
+      ok: true;
+      cached: boolean;
+      result: LabAnalysisResult;
+      illegal_evidence_count: number;
+      timings_ms: LabAnalyzeTimingsMs;
+      attempt_count: number;
+    }
+  | {
+      ok: false;
+      error: string;
+      code?: string;
+      timings_ms?: LabAnalyzeTimingsMs;
+      attempt_count?: number;
+    };
+
+export interface LabTrendTargetSummary {
+  identity_key: string;
+  target_wxid?: string;
+  target_display_name: string;
+  chatroom_id: string;
+  latest_chat_name?: string;
+  run_count: number;
+  mode_count: number;
+  first_created_at: number | null;
+  last_created_at: number | null;
+  verified_run_count: number;
+  display_only_run_count: number;
+  latest_confidence: LabConfidence;
+  verified_identity: boolean;
+}
+
+export interface LabTrendRunDimension {
+  name: string;
+  score: number;
+  level: LabLevel;
+  basis: string;
+  evidence_count: number;
+}
+
+export interface LabTrendRunPoint {
+  run_id: number;
+  identity_key: string;
+  mode: LabMode;
+  chatroom_id: string;
+  chat_name?: string;
+  target_wxid?: string;
+  target_display_name: string;
+  since: string;
+  until: string;
+  created_at: number;
+  avg_score: number;
+  risk_count: number;
+  detail_count: number;
+  confidence: LabConfidence;
+  profile_context_used: boolean;
+  source: Exclude<LabMessageSource, 'none'>;
+  dimensions: LabTrendRunDimension[];
+}
+
+export interface LabModeTrendSummary {
+  mode: LabMode;
+  run_count: number;
+  avg_score: number;
+  avg_risk_count: number;
+  total_risk_count: number;
+  latest_avg_score: number;
+  latest_created_at: number | null;
+}
+
+export interface LabDimensionFamilySummary {
+  family: 'risk' | 'repair' | 'boundary' | 'emotion' | 'initiative' | 'efficiency' | string;
+  dimensions: Array<{
+    name: string;
+    run_count: number;
+    avg_score: number;
+    latest_score: number;
+    risk_when?: 'low' | 'high';
+  }>;
+}
+
+export interface LabTrendSampleQuality {
+  trend_confidence: 'low' | 'medium' | 'high';
+  reasons: string[];
+  run_count: number;
+  mode_count: number;
+  time_span_days: number;
+  verified_identity: boolean;
+}
+
+export type LabTrendTargetsResponse =
+  | {
+      ok: true;
+      targets: LabTrendTargetSummary[];
+      total: number;
+      freshness: {
+        run_count: number;
+        first_created_at: number | null;
+        last_created_at: number | null;
+      };
+    }
   | { ok: false; error: string; code?: string };
+
+export type LabTargetTrendResponse =
+  | {
+      ok: true;
+      target: LabTrendTargetSummary;
+      runs: LabTrendRunPoint[];
+      mode_summary: LabModeTrendSummary[];
+      dimension_families: LabDimensionFamilySummary[];
+      sample_quality: LabTrendSampleQuality;
+    }
+  | { ok: false; error: string; code?: string };
+
+export type LabTargetTrendData = Extract<LabTargetTrendResponse, { ok: true }>;
 
 export interface LabRunListItem {
   id: number;

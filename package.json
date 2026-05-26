@@ -8,7 +8,7 @@
     "db:backup": "node scripts/backup-cockpit-db.mjs",
     "start": "next start",
     "lint": "eslint",
-    "test": "pnpm exec tsx lib/safe-url.test.ts",
+    "test": "pnpm exec tsx lib/safe-url.test.ts && pnpm exec tsx lib/lab-trends.test.ts",
     "demo:seed": "node scripts/seed_demo.cjs"
   },
   "pnpm": {

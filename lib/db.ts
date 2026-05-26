@@ -301,6 +301,44 @@ function migrateLabTables(d: Database.Database) {
   if (tableExists(d, 'conversation_lab_runs') && hasColumn(d, 'conversation_lab_runs', 'cache_key')) {
     for (const [name, def] of LAB_RUNS_COLUMNS) ensureColumn(d, 'conversation_lab_runs', name, def);
   }
+
+  // P3 trend query indexes — only on a column-compatible table (see fn).
+  createLabTrendIndexes(d);
+}
+
+/**
+ * P3 trend query indexes (idempotent). Guarded: an incompatible legacy
+ * conversation_lab_runs (e.g. kept non-empty without the trend columns) would
+ * make `CREATE INDEX ... ON (target_wxid, …)` fail with "no such column" and
+ * throw at startup — breaking the "keep legacy, only warn" promise. So we only
+ * build the indexes when all referenced columns exist; otherwise warn + skip,
+ * and never throw.
+ */
+export function createLabTrendIndexes(d: Database.Database) {
+  if (!tableExists(d, 'conversation_lab_runs')) return;
+  const needed = ['target_wxid', 'chatroom_id', 'target_display_name', 'mode', 'created_at'];
+  const missing = needed.filter((c) => !hasColumn(d, 'conversation_lab_runs', c));
+  if (missing.length > 0) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn(`[db] skip P3 trend indexes — conversation_lab_runs missing columns: ${missing.join(', ')}`);
+    }
+    return;
+  }
+  try {
+    d.exec(`
+      CREATE INDEX IF NOT EXISTS idx_lab_runs_target_wxid_created
+        ON conversation_lab_runs(target_wxid, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_lab_runs_target_display_chat_created
+        ON conversation_lab_runs(chatroom_id, target_display_name, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_lab_runs_target_mode_created
+        ON conversation_lab_runs(target_wxid, mode, created_at DESC);
+    `);
+  } catch (e) {
+    // Belt-and-suspenders: never let index creation crash startup.
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn(`[db] P3 trend index creation failed (skipped): ${e instanceof Error ? e.message : e}`);
+    }
+  }
 }
 
 const SEED_VERSION = 'qiaomu_v2_2026_05_23';

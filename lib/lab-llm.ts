@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { z } from 'zod';
 import {
   LAB_COMPRESSION_VERSION,
@@ -15,6 +16,7 @@ import {
   type LabCompressionMeta,
   type LabConfidence,
   type LabDimensionTemplate,
+  type LabLlmTimingsMs,
   type LabLlmRawResponse,
   type LabMode,
   type LabProvider,
@@ -69,6 +71,21 @@ export interface LabLlmValidatedResult {
   risk_count: number;
   confidence: LabConfidence;
   compression: LabCompressionMeta;
+  timings_ms: LabLlmTimingsMs;
+  attempt_count: number;
+}
+
+export class LabLlmRunError extends Error {
+  attempt_count: number;
+  timings_ms: LabLlmTimingsMs;
+
+  constructor(message: string, attemptCount: number, timingsMs: LabLlmTimingsMs, cause?: unknown) {
+    super(message);
+    this.name = 'LabLlmRunError';
+    this.attempt_count = attemptCount;
+    this.timings_ms = timingsMs;
+    this.cause = cause;
+  }
 }
 
 const RawDimensionSchema = z
@@ -182,33 +199,77 @@ export function prepareLabMessagesForPrompt(messages: LabSourceMessage[]): {
 
 export async function runLabLlm(input: RunLabLlmInput): Promise<LabLlmValidatedResult> {
   const config = getLabLlmConfig();
+  const totalStartedAt = performance.now();
+  const timings: LabLlmTimingsMs = {
+    prepare: 0,
+    prompt: 0,
+    provider: 0,
+    validate: 0,
+    total: 0,
+  };
+  const prepareStartedAt = performance.now();
   const prepared = prepareLabMessagesForPrompt(input.messages);
+  timings.prepare = elapsedMs(prepareStartedAt);
   let lastError: unknown;
+  let attemptCount = 0;
 
   for (let attempt = 0; attempt < 2; attempt++) {
+    attemptCount = attempt + 1;
     try {
-      const raw =
+      const promptStartedAt = performance.now();
+      const codexPrompt =
         config.provider === 'codex'
-          ? await runCodexJson<LabLlmRawResponse>(buildLabPrompt(input, prepared.messages, prepared.compression))
-          : config.provider === 'openai-compatible'
-            ? await runOpenAICompatibleJson<LabLlmRawResponse>(
-                buildLabMessages(input, prepared.messages, prepared.compression),
-              )
-            : config.provider === 'local'
+          ? buildLabPrompt(input, prepared.messages, prepared.compression)
+          : null;
+      const chatPrompt =
+        config.provider === 'openai-compatible' || config.provider === 'local'
+          ? buildLabMessages(input, prepared.messages, prepared.compression)
+          : null;
+      timings.prompt += elapsedMs(promptStartedAt);
+
+      const providerStartedAt = performance.now();
+      let raw: LabLlmRawResponse;
+      try {
+        raw =
+          config.provider === 'codex'
+            ? await runCodexJson<LabLlmRawResponse>(codexPrompt ?? '')
+            : config.provider === 'openai-compatible'
               ? await runOpenAICompatibleJson<LabLlmRawResponse>(
-                  buildLabMessages(input, prepared.messages, prepared.compression),
-                  HTTP_TIMEOUT_MS,
-                  false,
-                  LOCAL_BASE_URL,
+                  chatPrompt ?? buildLabMessages(input, prepared.messages, prepared.compression),
                 )
-              : unsupportedProvider(config.provider);
-      return normalizeLabLlmResponse(raw, input.dimensions, prepared.compression);
+              : config.provider === 'local'
+                ? await runOpenAICompatibleJson<LabLlmRawResponse>(
+                    chatPrompt ?? buildLabMessages(input, prepared.messages, prepared.compression),
+                    HTTP_TIMEOUT_MS,
+                    false,
+                    LOCAL_BASE_URL,
+                  )
+                : unsupportedProvider(config.provider);
+      } finally {
+        timings.provider += elapsedMs(providerStartedAt);
+      }
+
+      const validateStartedAt = performance.now();
+      let normalized: Omit<LabLlmValidatedResult, 'timings_ms' | 'attempt_count'>;
+      try {
+        normalized = normalizeLabLlmResponse(raw, input.dimensions, prepared.compression);
+      } finally {
+        timings.validate += elapsedMs(validateStartedAt);
+      }
+      timings.total = elapsedMs(totalStartedAt);
+      return {
+        ...normalized,
+        timings_ms: roundLlmTimings(timings),
+        attempt_count: attemptCount,
+      };
     } catch (e) {
+      timings.total = elapsedMs(totalStartedAt);
       lastError = e;
     }
   }
 
-  throw lastError instanceof Error ? lastError : new Error('lab LLM validation failed');
+  const message = lastError instanceof Error ? lastError.message : 'lab LLM validation failed';
+  throw new LabLlmRunError(message, attemptCount, roundLlmTimings(timings), lastError);
 }
 
 function compressionMeta(
@@ -329,7 +390,7 @@ function normalizeLabLlmResponse(
   rawResponse: LabLlmRawResponse,
   dimensions: LabDimensionTemplate[],
   compression: LabCompressionMeta,
-): LabLlmValidatedResult {
+): Omit<LabLlmValidatedResult, 'timings_ms' | 'attempt_count'> {
   const raw = RawResponseSchema.parse(coerceLabLlmRawResponse(rawResponse));
   const expectedNames = dimensions.map((d) => d.name);
   const actualNames = raw.dimensions.map((d) => d.name);
@@ -614,4 +675,18 @@ function parseOpenAICompatibleContent<T>(content: string): T {
 
 function unsupportedProvider(provider: LabProvider): never {
   throw new Error(`lab provider ${provider} is declared in contract but not implemented in lab runner`);
+}
+
+function elapsedMs(startedAt: number): number {
+  return performance.now() - startedAt;
+}
+
+function roundLlmTimings(timings: LabLlmTimingsMs): LabLlmTimingsMs {
+  return {
+    prepare: Math.round(timings.prepare),
+    prompt: Math.round(timings.prompt),
+    provider: Math.round(timings.provider),
+    validate: Math.round(timings.validate),
+    total: Math.round(timings.total),
+  };
 }

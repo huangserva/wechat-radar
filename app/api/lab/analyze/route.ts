@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import {
   getLabLlmConfig,
+  LabLlmRunError,
   prepareLabMessagesForPrompt,
   runLabLlm,
 } from '@/lib/lab-llm';
@@ -15,9 +17,11 @@ import {
   type LabAnalysisResult,
   type LabAnalyzeRequest,
   type LabAnalyzeResponse,
+  type LabAnalyzeTimingsMs,
   type LabConfidence,
   type LabDimensionTemplate,
   type LabEvidence,
+  type LabLlmTimingsMs,
   type LabMode,
   type LabSourceMessage,
   type LabStore,
@@ -120,29 +124,53 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const routeStartedAt = performance.now();
+  const timings: Partial<LabAnalyzeTimingsMs> = {};
+  let attemptCount = 0;
+
+  const requestParseStartedAt = performance.now();
   const body = await req.json().catch(() => null);
+  setTiming(timings, 'request_parse', requestParseStartedAt);
+
+  const schemaValidateStartedAt = performance.now();
   const parsed = AnalyzeSchema.safeParse(body);
+  addTiming(timings, 'validate', schemaValidateStartedAt);
   if (!parsed.success) {
-    return error('invalid_request', parsed.error.message, 400);
+    return error('invalid_request', parsed.error.message, 400, timings, routeStartedAt, attemptCount);
   }
 
   const request = parsed.data as LabAnalyzeRequest;
+  const requestValidateStartedAt = performance.now();
   const blocked = validateAnalyzeRequest(request);
-  if (blocked) return error(blocked.code, blocked.message, 400);
+  addTiming(timings, 'validate', requestValidateStartedAt);
+  if (blocked) return error(blocked.code, blocked.message, 400, timings, routeStartedAt, attemptCount);
 
   const config = getLabLlmConfig();
+  const prepareStartedAt = performance.now();
   const prepared = prepareLabMessagesForPrompt(request.messages);
+  setTiming(timings, 'prepare', prepareStartedAt);
+
+  const consentValidateStartedAt = performance.now();
   const consentError = validateConsent(request, config, prepared.compression.sampled_count);
-  if (consentError) return error(consentError.code, consentError.message, 400);
+  addTiming(timings, 'validate', consentValidateStartedAt);
+  if (consentError) return error(consentError.code, consentError.message, 400, timings, routeStartedAt, attemptCount);
+
+  const profileStartedAt = performance.now();
   const profileContext = request.use_profile_context ? loadLabProfileContext() : null;
   const profileHash = request.use_profile_context ? (profileContext?.hash ?? 'profile-empty') : 'profile-disabled';
+  setTiming(timings, 'profile', profileStartedAt);
 
+  const storeStartedAt = performance.now();
   const store = await loadLabStore();
+  setTiming(timings, 'store', storeStartedAt);
   if (!store) {
     return error(
       'lab_store_missing',
       'lib/lab-store.ts 尚未接入；等待后端持久化实现后 /api/lab/analyze 才会发送消息给模型。',
       501,
+      timings,
+      routeStartedAt,
+      attemptCount,
     );
   }
 
@@ -152,18 +180,25 @@ export async function POST(req: NextRequest) {
   const cacheKey = buildCacheKey(request, dimensionsHash, sourceMessageHash, config.model, profileHash);
 
   if (!request.force) {
+    const cacheStartedAt = performance.now();
     const cached = await store.getCachedRun(cacheKey);
+    setTiming(timings, 'cache_lookup', cacheStartedAt);
     if (cached) {
       return NextResponse.json({
         ok: true,
         cached: true,
         illegal_evidence_count: 0,
+        timings_ms: finalizeTimings(timings, routeStartedAt),
+        attempt_count: attemptCount,
         result: cached,
       } satisfies LabAnalyzeResponse);
     }
+  } else {
+    timings.cache_lookup = 0;
   }
 
   try {
+    const llmStartedAt = performance.now();
     const llm = await runLabLlm({
       mode: request.mode,
       chatroom_id: request.chatroom_id,
@@ -177,11 +212,17 @@ export async function POST(req: NextRequest) {
       profile_context: profileContext?.text,
       use_profile_context: Boolean(request.use_profile_context),
     });
+    attemptCount = llm.attempt_count;
+    setTiming(timings, 'llm_total', llmStartedAt);
+    applyLlmTimings(timings, llm.timings_ms);
 
+    const evidenceStartedAt = performance.now();
     const messageMap = buildMessageMap(request.messages);
     const evidenceStats = { invalid: 0 };
     const dimensionsWithEvidence = llm.dimensions.map((d) => withEvidence(d, messageMap, evidenceStats));
     const detailsWithEvidence = llm.details.map((d) => withDetailEvidence(d, messageMap, evidenceStats));
+    setTiming(timings, 'evidence', evidenceStartedAt);
+
     const result: LabAnalysisResult = {
       cache_key: cacheKey,
       mode: request.mode,
@@ -213,6 +254,7 @@ export async function POST(req: NextRequest) {
       result.confidence = degradeConfidence(result.confidence);
     }
 
+    const saveStartedAt = performance.now();
     const saved = await store.saveRun({
       request,
       result,
@@ -222,15 +264,29 @@ export async function POST(req: NextRequest) {
       target_resolution_json: JSON.stringify(request.target_resolution),
       compression_version: llm.compression.compression_version,
     });
+    setTiming(timings, 'save', saveStartedAt);
 
     return NextResponse.json({
       ok: true,
       cached: false,
       illegal_evidence_count: evidenceStats.invalid,
+      timings_ms: finalizeTimings(timings, routeStartedAt),
+      attempt_count: attemptCount,
       result: saved,
     } satisfies LabAnalyzeResponse);
   } catch (e) {
-    return error('lab_analysis_failed', e instanceof Error ? e.message : 'unknown error', 500);
+    if (e instanceof LabLlmRunError) {
+      attemptCount = e.attempt_count;
+      applyLlmTimings(timings, e.timings_ms);
+    }
+    return error(
+      'lab_analysis_failed',
+      e instanceof Error ? e.message : 'unknown error',
+      500,
+      timings,
+      routeStartedAt,
+      attemptCount,
+    );
   }
 }
 
@@ -429,6 +485,53 @@ async function loadLabStore(): Promise<LabStore | null> {
   }
 }
 
-function error(code: string, message: string, status: number) {
-  return NextResponse.json({ ok: false, code, error: message } satisfies LabAnalyzeResponse, { status });
+function error(
+  code: string,
+  message: string,
+  status: number,
+  timings?: Partial<LabAnalyzeTimingsMs>,
+  routeStartedAt?: number,
+  attemptCount?: number,
+) {
+  return NextResponse.json(
+    {
+      ok: false,
+      code,
+      error: message,
+      timings_ms: timings && routeStartedAt !== undefined ? finalizeTimings(timings, routeStartedAt) : undefined,
+      attempt_count: attemptCount,
+    } satisfies LabAnalyzeResponse,
+    { status },
+  );
+}
+
+function setTiming(
+  timings: Partial<LabAnalyzeTimingsMs>,
+  key: Exclude<keyof LabAnalyzeTimingsMs, 'total'>,
+  startedAt: number,
+) {
+  timings[key] = Math.round(performance.now() - startedAt);
+}
+
+function addTiming(
+  timings: Partial<LabAnalyzeTimingsMs>,
+  key: Exclude<keyof LabAnalyzeTimingsMs, 'total'>,
+  startedAt: number,
+) {
+  timings[key] = Math.round((timings[key] ?? 0) + performance.now() - startedAt);
+}
+
+function applyLlmTimings(timings: Partial<LabAnalyzeTimingsMs>, llmTimings: LabLlmTimingsMs) {
+  timings.llm_prepare = llmTimings.prepare;
+  timings.llm_prompt = llmTimings.prompt;
+  timings.llm_provider = llmTimings.provider;
+  timings.llm_validate = llmTimings.validate;
+  timings.llm_total = timings.llm_total ?? llmTimings.total;
+}
+
+function finalizeTimings(timings: Partial<LabAnalyzeTimingsMs>, routeStartedAt: number): LabAnalyzeTimingsMs {
+  return {
+    ...timings,
+    total: Math.round(performance.now() - routeStartedAt),
+  };
 }
