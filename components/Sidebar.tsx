@@ -10,6 +10,10 @@ import {
   LayoutDashboard,
   Sparkles,
   Link2,
+  FlaskConical,
+  CheckSquare,
+  BookOpen,
+  Flame,
 } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
 
@@ -97,11 +101,39 @@ export default function Sidebar() {
           active={pathname === '/topics'}
         />
         <NavItem
+          href="/hotspots"
+          icon={<Flame size={15} />}
+          label="热点信号"
+          badge="Hot"
+          active={pathname === '/hotspots'}
+        />
+        <NavItem
           href="/links"
           icon={<Link2 size={15} />}
           label="链接情报"
           badge="Link"
           active={pathname === '/links'}
+        />
+        <NavItem
+          href="/commitments"
+          icon={<CheckSquare size={15} />}
+          label="承诺追踪"
+          badge="Due"
+          active={pathname === '/commitments'}
+        />
+        <NavItem
+          href="/knowledge"
+          icon={<BookOpen size={15} />}
+          label="知识库"
+          badge="KB"
+          active={pathname === '/knowledge'}
+        />
+        <NavItem
+          href="/lab"
+          icon={<FlaskConical size={15} />}
+          label="对话实验室"
+          badge="AI"
+          active={pathname === '/lab'}
         />
       </nav>
 
@@ -132,12 +164,12 @@ export default function Sidebar() {
         {daemon?.running ? (
           <span>
             <span className="inline-block size-2 rounded-full bg-[var(--accent)] mr-1.5 align-middle" />
-            wx-daemon 运行中{daemon.pid ? ` (PID ${daemon.pid})` : ''}
+            解密 DB 可读 / 数据源在线
           </span>
         ) : (
           <span>
             <span className="inline-block size-2 rounded-full bg-[var(--danger)] mr-1.5 align-middle" />
-            wx-daemon 未运行
+            数据源不可读
           </span>
         )}
       </div>

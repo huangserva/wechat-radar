@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import Sidebar from '@/components/Sidebar';
 import { Calendar, ExternalLink, Newspaper, RefreshCw, Wrench } from 'lucide-react';
+import { safeExternalUrl } from '@/lib/safe-url';
 
 type LinkInsight = {
   kind: 'article' | 'tool';
@@ -182,9 +183,12 @@ function RawWechatPanel({
           <div className="py-16 text-center text-[11px] text-[var(--text-3)]">当天没有解析到微信文章链接</div>
         ) : (
           <div className="space-y-1.5">
-            {items.map((item) => (
+            {items.map((item) => {
+              const href = safeExternalUrl(item.url);
+              return (
               <div key={`${item.chatroom_id}:${item.local_id}:${item.canonical_url}`} className="rounded-md border border-transparent px-2 py-2 hover:border-[var(--border-soft)] hover:bg-[var(--surface-2)]">
-                <a href={item.url} target="_blank" rel="noreferrer" className="group block min-w-0" title={item.url}>
+                {href ? (
+                <a href={href} target="_blank" rel="noopener noreferrer" className="group block min-w-0" title={href}>
                   <div className="line-clamp-2 text-[12px] font-medium leading-snug text-[var(--text)] group-hover:text-[var(--accent)]">
                     {item.title || item.domain || item.raw_kind}
                   </div>
@@ -192,6 +196,14 @@ function RawWechatPanel({
                     {item.url}
                   </div>
                 </a>
+                ) : (
+                <div className="block min-w-0" title="非 http(s) 链接，已禁用">
+                  <div className="line-clamp-2 text-[12px] font-medium leading-snug text-[var(--text-3)] line-through">
+                    {item.title || item.domain || item.raw_kind}
+                  </div>
+                  <div className="mt-1 break-all text-[10px] leading-snug text-[var(--text-3)]">{item.url}</div>
+                </div>
+                )}
                 <div className="mt-1 flex items-center justify-between gap-2 text-[10px] text-[var(--text-3)]">
                   <Link
                     href={`/groups/${encodeURIComponent(item.chatroom_id)}?date=${date}`}
@@ -204,7 +216,8 @@ function RawWechatPanel({
                   </span>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -255,26 +268,38 @@ function LinkInsightPanel({
 
 function LinkInsightRow({ item, date }: { item: LinkInsight; date: string }) {
   const first = item.sources[0];
+  const href = safeExternalUrl(item.url);
+  const inner = (
+    <>
+      <span className="min-w-0">
+        <span className="line-clamp-2 text-[12px] font-medium leading-snug text-[var(--text)] group-hover:text-[var(--accent)]">
+          {item.title}
+        </span>
+        <span className="mt-1 flex min-w-0 items-center gap-2 text-[10px] text-[var(--text-3)]">
+          <span className={sourceClass(first?.source)}>{sourceLabel(first?.source)}</span>
+          <span className="truncate">{item.domain}</span>
+        </span>
+      </span>
+      <ExternalLink size={12} className="mt-0.5 shrink-0 text-[var(--text-3)] group-hover:text-[var(--accent)]" />
+    </>
+  );
   return (
     <div className="rounded-md border border-transparent px-2 py-2 hover:border-[var(--border-soft)] hover:bg-[var(--surface-2)]">
-      <a
-        href={item.url}
-        target="_blank"
-        rel="noreferrer"
-        className="group flex min-w-0 items-start justify-between gap-2"
-        title={item.title}
-      >
-        <span className="min-w-0">
-          <span className="line-clamp-2 text-[12px] font-medium leading-snug text-[var(--text)] group-hover:text-[var(--accent)]">
-            {item.title}
-          </span>
-          <span className="mt-1 flex min-w-0 items-center gap-2 text-[10px] text-[var(--text-3)]">
-            <span className={sourceClass(first?.source)}>{sourceLabel(first?.source)}</span>
-            <span className="truncate">{item.domain}</span>
-          </span>
-        </span>
-        <ExternalLink size={12} className="mt-0.5 shrink-0 text-[var(--text-3)] group-hover:text-[var(--accent)]" />
-      </a>
+      {href ? (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="group flex min-w-0 items-start justify-between gap-2"
+          title={href}
+        >
+          {inner}
+        </a>
+      ) : (
+        <div className="group flex min-w-0 items-start justify-between gap-2 opacity-70" title="非 http(s) 链接，已禁用">
+          {inner}
+        </div>
+      )}
       <div className="mt-1 flex items-center justify-between gap-2 text-[10px] text-[var(--text-3)]">
         <Link
           href={`/groups/${encodeURIComponent(first.chatroom_id)}?date=${date}`}
