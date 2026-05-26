@@ -45,6 +45,8 @@ pnpm dev
 ## 前置条件
 
 - [ ] macOS，且已登录微信 4.x
+- [ ] 建议使用注册半年以上的小号或测试号，不建议直接使用主力微信号
+- [ ] 已测试微信版本：`4.1.9.58`；不建议在更高版本上贸然测试
 - [ ] Node.js 20+：`node --version`
 - [ ] pnpm：`corepack enable && pnpm --version`
 - [ ] wx-cli：`wx --version`
@@ -104,7 +106,14 @@ WeChat Radar 默认只在本机读写数据：
 - 页面只以 React 文本节点渲染聊天内容
 - 不把微信密钥、会话、数据库、模型缓存提交进仓库
 
-重要提醒：这个项目会读取你本机微信数据。请确认你的使用方式符合微信客户端规则、当地法律、群成员隐私预期和你所在组织的合规要求。不要把包含真实聊天内容的数据库或截图上传到公开仓库。
+重要风险提示：
+
+- 建议使用注册半年以上的小号或测试号，不建议使用主力微信号。
+- 当前只建议读取历史聊天记录，用于本地检索、聚合和摘要。
+- 不建议读取朋友圈，也不要自动点赞、评论、发消息、加好友、改资料或做任何写入/社交操作。
+- 已测试通过的微信版本是 `4.1.9.58`；不建议在更高版本上贸然测试，版本变化可能带来不可预期的账号风险。
+- 请确认你的使用方式符合微信客户端规则、当地法律、群成员隐私预期和你所在组织的合规要求。
+- 不要把包含真实聊天内容的数据库或截图上传到公开仓库。
 
 ## 项目结构
 
@@ -163,6 +172,8 @@ Open [http://localhost:3000](http://localhost:3000). The first run redirects to 
 ### Requirements
 
 - [ ] macOS with WeChat 4.x logged in
+- [ ] Prefer a secondary/test WeChat account that has existed for at least six months
+- [ ] Tested WeChat version: `4.1.9.58`; newer versions are not recommended for unverified testing
 - [ ] Node.js 20+
 - [ ] pnpm
 - [ ] wx-cli initialized and running
@@ -171,6 +182,13 @@ Open [http://localhost:3000](http://localhost:3000). The first run redirects to 
 ### Privacy
 
 By default, runtime data is stored locally under `~/.wechat-radar/`. The app does not upload your chat database. You are responsible for using it in a way that respects WeChat rules, local laws, group privacy expectations, and organizational compliance.
+
+Safety guidance:
+
+- Prefer a secondary or test WeChat account that has existed for at least six months.
+- Use this project for read-only historical chat access.
+- Do not use it for Moments, likes, comments, sending messages, adding friends, profile changes, or any other write/social action.
+- The tested WeChat version is `4.1.9.58`; newer versions may carry unknown account risk and are not recommended for unverified testing.
 
 ### Troubleshooting
 
