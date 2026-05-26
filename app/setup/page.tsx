@@ -7,8 +7,22 @@ type SetupStatus = {
   ok: boolean;
   dataDir: string;
   configured: boolean;
-  config: { myNicknames: string[]; demoMode: boolean; privacyConfirmed: boolean; defaultSyncDays: number };
-  checks: { wxInstalled: boolean; wxDaemonRunning: boolean; wxDaemonPid: number | null };
+  config: {
+    myNicknames: string[];
+    demoMode: boolean;
+    privacyConfirmed: boolean;
+    defaultSyncDays: number;
+    wechatDataSource: 'db' | 'wx';
+    wechatCollectorDb: string;
+    wechatDecryptedDir: string;
+  };
+  checks: {
+    wxInstalled: boolean;
+    wxDaemonRunning: boolean;
+    wxDaemonPid: number | null;
+    collectorDb: string;
+    decryptedDir: string;
+  };
 };
 
 export default function SetupPage() {
@@ -68,8 +82,10 @@ export default function SetupPage() {
         <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
           <section className="card p-5">
             <SectionTitle icon={<Wrench size={15} />} title="环境检查" />
-            <CheckRow label="wx-cli" ok={status?.checks.wxInstalled ?? false} detail={status?.checks.wxInstalled ? '已安装' : '未检测到 wx 命令'} />
-            <CheckRow label="wx-daemon" ok={status?.checks.wxDaemonRunning ?? false} detail={status?.checks.wxDaemonRunning ? `运行中 PID ${status?.checks.wxDaemonPid ?? ''}` : '未运行，可先使用 demo 模式'} />
+            <CheckRow label="数据源" ok={status?.checks.wxInstalled ?? false} detail={status?.config.wechatDataSource === 'wx' ? 'wx-cli / wx-daemon' : '解密 DB adapter'} />
+            <CheckRow label="读取状态" ok={status?.checks.wxDaemonRunning ?? false} detail={status?.checks.wxDaemonRunning ? '已检测到可读数据' : '未检测到数据，可先使用 demo 模式'} />
+            <CheckRow label="collector.db" ok={status?.checks.wxInstalled ?? false} detail={status?.checks.collectorDb ?? '加载中'} />
+            <CheckRow label="decrypted" ok={status?.checks.wxInstalled ?? false} detail={status?.checks.decryptedDir ?? '加载中'} />
             <CheckRow label="数据目录" ok detail={status?.dataDir ?? '加载中'} />
           </section>
 

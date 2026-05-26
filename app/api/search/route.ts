@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { wxSessions } from '@/lib/wx';
+import { wxSearchMessagesWithMeta, wxSessions } from '@/lib/wx';
+import type { WxSource, WxEmptyReason } from '@/lib/wx-types';
 
 export const dynamic = 'force-dynamic';
 
@@ -122,6 +123,33 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  let messageSource: WxSource = messages.length > 0 ? 'local' : 'none';
+  let messageEmptyReason: WxEmptyReason = messages.length > 0 ? null : 'no_match';
+  if (messages.length < 10) {
+    const seen = new Set(results.map((r) => r.id));
+    const live = await wxSearchMessagesWithMeta(q, 10 - messages.length).catch(
+      () => ({ data: [], source: 'none' as WxSource, empty_reason: 'no_match' as WxEmptyReason }),
+    );
+    const liveMessages = live.data;
+    // Only override source when the local radar.db produced nothing itself.
+    if (messages.length === 0) {
+      messageSource = live.source;
+      messageEmptyReason = live.empty_reason;
+    }
+    for (const m of liveMessages) {
+      const id = `message:${m.username}:${m.time}:${m.sender}`;
+      if (seen.has(id)) continue;
+      results.push({
+        id,
+        type: 'message',
+        title: compact(m.content || m.sender, 80),
+        subtitle: `${m.chat ?? nameMap.get(m.username) ?? m.username} · ${m.sender} · ${m.time}`,
+        href: `/groups/${encodeURIComponent(m.username)}?date=${m.date}`,
+      });
+      seen.add(id);
+    }
+  }
+
   const links = db()
     .prepare(
       `SELECT canonical_url, title, domain, MAX(date) AS date
@@ -143,7 +171,12 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  return NextResponse.json({ ok: true, results: results.slice(0, 32) });
+  return NextResponse.json({
+    ok: true,
+    results: results.slice(0, 32),
+    message_source: messageSource,
+    message_empty_reason: messageEmptyReason,
+  });
 }
 
 async function loadGroupNames(): Promise<Map<string, string>> {

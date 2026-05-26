@@ -10,6 +10,11 @@
     "lint": "eslint",
     "demo:seed": "node scripts/seed_demo.cjs"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
+  },
   "dependencies": {
     "better-sqlite3": "^12.10.0",
     "echarts": "^6.1.0",

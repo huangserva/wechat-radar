@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { wxSessions } from '@/lib/wx';
-import type { WxSession } from '@/lib/wx-types';
+import { wxSessions, wxStatsRangeWithMeta } from '@/lib/wx';
+import type { WxSession, WxSource, WxEmptyReason } from '@/lib/wx-types';
 import { listCachedStatsRange } from '@/lib/stats-aggregator';
 import { listAllTags, listGroups, listFavorites } from '@/lib/groups';
 import { effectiveGroupIds } from '@/lib/group-classifier';
@@ -25,8 +25,21 @@ export async function GET(req: NextRequest) {
   const groupNames = new Map(groups.map((g) => [g.username, g.chat]));
   const allCount = groups.length;
 
-  const cached = listCachedStatsRange(w.since, w.until);
-  const totalMessages = cached.reduce((sum, r) => sum + r.total, 0);
+  let cached = listCachedStatsRange(w.since, w.until);
+  let totalMessages = cached.reduce((sum, r) => sum + r.total, 0);
+  let dataSource: WxSource = totalMessages > 0 ? 'local' : 'none';
+  let emptyReason: WxEmptyReason = totalMessages > 0 ? null : 'no_match';
+  if (!readConfig().demoMode && totalMessages === 0) {
+    const live = await wxStatsRangeWithMeta(w.since, w.until).catch(
+      () => ({ data: [], source: 'none' as WxSource, empty_reason: 'no_match' as WxEmptyReason }),
+    );
+    dataSource = live.source;
+    emptyReason = live.empty_reason;
+    if (live.data.length > 0) {
+      cached = live.data;
+      totalMessages = cached.reduce((sum, r) => sum + r.total, 0);
+    }
+  }
 
   const dates = dateList(w.since, w.until);
   const trendByDate = new Map<string, number>(dates.map((d) => [d, 0]));
@@ -151,6 +164,8 @@ export async function GET(req: NextRequest) {
         favorites: favorites.length,
         unsorted: unsortedCount,
       },
+      source: dataSource,
+      empty_reason: emptyReason,
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : 'unknown error';

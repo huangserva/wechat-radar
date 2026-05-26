@@ -7,6 +7,9 @@ export const DATA_DIR =
   join(homedir(), '.wechat-radar');
 
 const CONFIG_PATH = join(DATA_DIR, 'config.json');
+const DEFAULT_WECHAT_ASSISTANT_DIR = join(homedir(), 'wechat-assistant');
+
+export type WechatDataSource = 'db' | 'wx';
 
 export interface Config {
   myNicknames: string[];
@@ -16,6 +19,11 @@ export interface Config {
   setupCompleted: boolean;
   demoMode: boolean;
   defaultSyncDays: number;
+  wechatDataSource: WechatDataSource;
+  wechatAssistantDir: string;
+  wechatCollectorDb: string;
+  wechatDecryptedDir: string;
+  wechatSelfWxid: string;
 }
 
 function envNames(): string[] {
@@ -25,6 +33,53 @@ function envNames(): string[] {
     .filter(Boolean);
 }
 
+function envDataSource(): WechatDataSource {
+  return process.env.WECHAT_RADAR_DATA_SOURCE === 'wx' ? 'wx' : 'db';
+}
+
+export function expandHome(path: string): string {
+  if (path === '~') return homedir();
+  if (path.startsWith('~/')) return join(homedir(), path.slice(2));
+  return path;
+}
+
+function assistantDirFromEnv(): string {
+  return expandHome(process.env.WECHAT_RADAR_WECHAT_ASSISTANT_DIR || DEFAULT_WECHAT_ASSISTANT_DIR);
+}
+
+function collectorDbFromEnv(workDir: string): string {
+  return expandHome(process.env.WECHAT_RADAR_COLLECTOR_DB || join(workDir, 'collector.db'));
+}
+
+function decryptedDirFromEnv(workDir: string): string {
+  return expandHome(process.env.WECHAT_RADAR_DECRYPTED_DIR || join(workDir, 'decrypted'));
+}
+
+function withEnvOverrides(config: Config): Config {
+  const workDir = assistantDirFromEnv();
+  const assistantDirOverridden = Boolean(process.env.WECHAT_RADAR_WECHAT_ASSISTANT_DIR);
+  return {
+    ...config,
+    myNicknames: envNames().length > 0 ? envNames() : config.myNicknames,
+    demoMode: process.env.WECHAT_RADAR_DEMO === '1' ? true : config.demoMode,
+    wechatDataSource: process.env.WECHAT_RADAR_DATA_SOURCE ? envDataSource() : config.wechatDataSource,
+    wechatAssistantDir: assistantDirOverridden ? workDir : expandHome(config.wechatAssistantDir),
+    wechatCollectorDb: process.env.WECHAT_RADAR_COLLECTOR_DB
+      ? collectorDbFromEnv(workDir)
+      : assistantDirOverridden
+        ? collectorDbFromEnv(workDir)
+        : expandHome(config.wechatCollectorDb),
+    wechatDecryptedDir: process.env.WECHAT_RADAR_DECRYPTED_DIR
+      ? decryptedDirFromEnv(workDir)
+      : assistantDirOverridden
+        ? decryptedDirFromEnv(workDir)
+        : expandHome(config.wechatDecryptedDir),
+    wechatSelfWxid: process.env.WECHAT_RADAR_SELF_WXID || config.wechatSelfWxid,
+  };
+}
+
+const DEFAULT_ASSISTANT_DIR = assistantDirFromEnv();
+
 const DEFAULTS: Config = {
   myNicknames: envNames(),
   defaultRange: 'week',
@@ -33,23 +88,26 @@ const DEFAULTS: Config = {
   setupCompleted: false,
   demoMode: process.env.WECHAT_RADAR_DEMO === '1',
   defaultSyncDays: 7,
+  wechatDataSource: envDataSource(),
+  wechatAssistantDir: DEFAULT_ASSISTANT_DIR,
+  wechatCollectorDb: collectorDbFromEnv(DEFAULT_ASSISTANT_DIR),
+  wechatDecryptedDir: decryptedDirFromEnv(DEFAULT_ASSISTANT_DIR),
+  wechatSelfWxid: process.env.WECHAT_RADAR_SELF_WXID || '',
 };
 
 export function readConfig(): Config {
   if (!existsSync(CONFIG_PATH)) {
     mkdirSync(dirname(CONFIG_PATH), { recursive: true });
     writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULTS, null, 2), 'utf-8');
-    return DEFAULTS;
+    return withEnvOverrides(DEFAULTS);
   }
   try {
     const raw = readFileSync(CONFIG_PATH, 'utf-8');
     const parsed = JSON.parse(raw) as Partial<Config>;
     const merged = { ...DEFAULTS, ...parsed };
-    if (envNames().length > 0) merged.myNicknames = envNames();
-    if (process.env.WECHAT_RADAR_DEMO === '1') merged.demoMode = true;
-    return merged;
+    return withEnvOverrides(merged);
   } catch {
-    return DEFAULTS;
+    return withEnvOverrides(DEFAULTS);
   }
 }
 

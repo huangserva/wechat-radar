@@ -40,3 +40,6 @@ tsconfig.tsbuildinfo
 .beads/
 CLAUDE.md
 AGENTS.md
+
+# Playwright MCP worker artifacts
+.playwright-mcp/

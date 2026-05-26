@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { DATA_DIR, configStatus, writeConfig } from '@/lib/config';
 import { seedDemoData } from '@/lib/demo-data';
 import { wxAvailable, wxDaemonStatus } from '@/lib/wx';
+import { wxDbPaths } from '@/lib/wechat-db-adapter';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,6 +16,7 @@ const SetupSchema = z.object({
 
 export async function GET() {
   const [wxInstalled, daemon] = await Promise.all([wxAvailable(), wxDaemonStatus()]);
+  const paths = wxDbPaths();
   return NextResponse.json({
     ok: true,
     ...configStatus(),
@@ -23,6 +25,8 @@ export async function GET() {
       wxInstalled,
       wxDaemonRunning: daemon.running,
       wxDaemonPid: daemon.pid ?? null,
+      collectorDb: paths.collectorDb,
+      decryptedDir: paths.decryptedDir,
     },
   });
 }

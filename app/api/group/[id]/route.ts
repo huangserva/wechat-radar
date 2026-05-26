@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { todayStr } from '@/lib/range';
 import { db } from '@/lib/db';
 import { listMessagesForDate, getSyncState, listAllSyncedDates } from '@/lib/messages-store';
-import { wxSessions } from '@/lib/wx';
+import { wxHistoryWithMeta, wxSessions } from '@/lib/wx';
+import type { WxSource, WxEmptyReason } from '@/lib/wx-types';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,8 +30,18 @@ export async function GET(
     if (found) chatName = found.chat;
   } catch {}
 
-  // 当日消息
-  const messages = listMessagesForDate(chatroomId, date, limit);
+  // 当日消息：先查本地 radar.db，空了再走 collector→raw fallback
+  let messages = listMessagesForDate(chatroomId, date, limit);
+  let source: WxSource = 'local';
+  let emptyReason: WxEmptyReason = messages.length > 0 ? null : 'no_match';
+  if (messages.length === 0) {
+    try {
+      const live = await wxHistoryWithMeta(chatroomId, date, date, limit);
+      messages = live.data.map((m) => ({ ...m, chatroom_id: chatroomId, date }));
+      source = live.source;
+      emptyReason = live.empty_reason;
+    } catch {}
+  }
 
   // 当日聚合统计
   const total = messages.length;
@@ -78,5 +89,7 @@ export async function GET(
     daily_history: dailyHistory,
     sync_state: syncState ?? null,
     synced_dates: syncedDates,
+    source,
+    empty_reason: emptyReason,
   });
 }
