@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 const Database = require('better-sqlite3');
 const { existsSync, mkdirSync, writeFileSync } = require('node:fs');
 const { homedir } = require('node:os');

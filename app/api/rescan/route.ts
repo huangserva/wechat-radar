@@ -4,6 +4,7 @@ import { syncFullHistory } from '@/lib/stats-aggregator';
 import { normalizeDate, normalizeRangeKey, rangeToWindow, type RangeKey } from '@/lib/range';
 import { readConfig } from '@/lib/config';
 import { cache, CK } from '@/lib/cache';
+import { buildTopicsForDate } from '@/lib/topics';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 1800; // 30 min
@@ -64,6 +65,14 @@ export async function POST(req: NextRequest) {
           concurrency,
           onProgress: (p) => send(p),
         });
+
+        const topicDates = datesBetween(since, until).slice(-autoTopicDays(body.full));
+        send({ type: 'topics_start', dates: topicDates.length });
+        for (const date of topicDates) {
+          send({ type: 'topics_date', date, message: '开始构建话题…' });
+          await buildTopicsForDate(date, (p) => send({ ...p, type: `topics_${p.type}`, date }));
+        }
+
         cache.del(CK.sessions());
         send({
           type: 'finished',
@@ -86,4 +95,28 @@ export async function POST(req: NextRequest) {
       Connection: 'keep-alive',
     },
   });
+}
+
+function datesBetween(since: string, until: string): string[] {
+  const out: string[] = [];
+  const start = parseLocalDate(since);
+  const end = parseLocalDate(until);
+  for (const d = start; d.getTime() <= end.getTime(); d.setDate(d.getDate() + 1)) {
+    out.push(formatLocalDate(d));
+  }
+  return out;
+}
+
+function parseLocalDate(date: string): Date {
+  const [y, m, d] = date.split('-').map(Number);
+  return new Date(y, (m || 1) - 1, d || 1);
+}
+
+function formatLocalDate(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function autoTopicDays(full?: boolean): number {
+  const configured = Number(process.env.WECHAT_RADAR_AUTO_TOPIC_DAYS ?? (full ? 14 : 31));
+  return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 31;
 }

@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "微信雷达",
-  description: "本地优先的微信群聊情报看板",
+  title: "WeChat Radar",
+  description: "Local-first WeChat group intelligence dashboard",
 };
 
 export default function RootLayout({
@@ -12,8 +12,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN" className="h-full">
-      <body className="min-h-full">{children}</body>
+    <html lang="zh-CN" className="h-full" suppressHydrationWarning>
+      <body className="min-h-full">
+        {children}
+      </body>
     </html>
   );
 }

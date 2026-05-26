@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
     return new Response('image not found in wx cache', { status: 404 });
   }
 
-  const buf = await readFile(/*turbopackIgnore: true*/ found.path);
+  const buf = await readFile(found.path);
   return new Response(new Uint8Array(buf), {
     headers: {
       'Content-Type': mimeFor(found.format),

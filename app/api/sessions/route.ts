@@ -70,7 +70,6 @@ export async function GET() {
   }
 }
 
-
 async function loadSessionsSafe(limit: number): Promise<WxSession[]> {
   if (readConfig().demoMode) return listLocalSessionsFallback(limit);
   const cached = cache.get(CK.sessions()) as WxSession[] | undefined;

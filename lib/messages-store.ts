@@ -1,4 +1,5 @@
 import { db } from './db';
+import { upsertLinksForMessage } from './message-links';
 import type { WxMessage } from './wx-types';
 
 export interface MessageRow extends WxMessage {
@@ -42,6 +43,15 @@ export function bulkInsertMessages(chatroomId: string, messages: WxMessage[]): n
         m.type ?? '',
         dateOfMessage(m),
       );
+      upsertLinksForMessage({
+        chatroom_id: chatroomId,
+        local_id: m.local_id,
+        sender: m.sender ?? '',
+        content: m.content ?? '',
+        time: m.time ?? '',
+        timestamp: m.timestamp ?? 0,
+        date: dateOfMessage(m),
+      });
       if (r.changes > 0) inserted++;
     }
   });

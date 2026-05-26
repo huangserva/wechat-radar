@@ -72,7 +72,7 @@ export default function ClassifyPage() {
     <div className="flex h-screen">
       <Sidebar />
       <main className="flex flex-1 flex-col overflow-hidden">
-        <div className="flex items-center justify-between border-b border-[var(--border-soft)] bg-[rgba(8,13,10,0.74)] px-6 py-3 backdrop-blur">
+        <div className="flex items-center justify-between border-b border-[var(--border-soft)] bg-[var(--chrome-bg)] px-6 py-3 backdrop-blur">
           <div className="flex items-center gap-3">
             <Link href="/" className="text-[var(--text-3)] hover:text-[var(--text)]">
               <ArrowLeft size={16} />

@@ -98,6 +98,7 @@ export interface DashboardLinkHighlight {
   title: string;
   url: string;
   domain: string;
+  source: string;
   score: number;
   verdict: string;
   count: number;
@@ -149,7 +150,7 @@ export function buildDashboardIntelligence(
   groupNames = new Map<string, string>(),
 ): DashboardIntelligence {
   date = resolveIntelligenceDate(date);
-  const key = `dashboard-intelligence:${date}:v11`;
+  const key = `dashboard-intelligence:${date}:v14`;
   const cached = cache.get(key) as DashboardIntelligence | undefined;
   if (cached) return cached;
 
@@ -174,6 +175,37 @@ export function buildDashboardIntelligence(
        LIMIT ?`,
     )
     .all(minusDays(date, 7), date, 9000) as MessageSignalRow[];
+  const linkRows = db()
+    .prepare(
+      `SELECT
+         ml.url,
+         ml.canonical_url,
+         ml.title,
+         ml.domain,
+         ml.source,
+         ml.confidence,
+         ml.time,
+         ml.chatroom_id,
+         m.content
+       FROM message_links ml
+       JOIN messages m
+         ON m.chatroom_id = ml.chatroom_id
+        AND m.local_id = ml.local_id
+       WHERE ml.date = ?
+       ORDER BY ml.timestamp DESC
+       LIMIT 600`,
+    )
+    .all(date) as Array<{
+    url: string;
+    canonical_url: string;
+    title: string | null;
+    domain: string;
+    source: string;
+    confidence: number;
+    time: string;
+    chatroom_id: string;
+    content: string;
+  }>;
 
   const candidates: DashboardSignalItem[] = [];
   const opportunities: DashboardOpportunityItem[] = [];
@@ -203,6 +235,7 @@ export function buildDashboardIntelligence(
       groups: Set<string>;
       last_seen: string;
       snippets: string[];
+      sources: Set<string>;
     }
   >();
 
@@ -261,28 +294,30 @@ export function buildDashboardIntelligence(
     if (TOOL_RE.test(clean)) source.tool_count++;
     sourceMap.set(sourceKey, source);
 
-    for (const url of extractUrls(row.content)) {
-      const domain = domainOf(url);
-      if (!domain) continue;
-      const kind = isArticleUrl(url) ? 'article' : isToolUrl(url, clean) ? 'tool' : null;
-      if (!kind) continue;
-      const key = normalizeUrlKey(url);
-      const bucket = linkBuckets.get(key) ?? {
-        kind,
-        title: titleFromLinkContext(row.content, url),
-        url,
-        domain,
-        count: 0,
-        groups: new Set<string>(),
-        last_seen: row.time,
-        snippets: [],
-      };
-      bucket.count++;
-      bucket.groups.add(row.chatroom_id);
-      bucket.last_seen = bucket.last_seen > row.time ? bucket.last_seen : row.time;
-      if (clean) bucket.snippets.push(clean.slice(0, 80));
-      linkBuckets.set(key, bucket);
-    }
+  }
+
+  for (const row of linkRows) {
+    const kind = isArticleUrl(row.canonical_url) ? 'article' : isToolUrl(row.canonical_url, row.content) ? 'tool' : null;
+    if (!kind) continue;
+    const key = normalizeUrlKey(row.canonical_url);
+    const clean = cleanContent(row.content);
+    const bucket = linkBuckets.get(key) ?? {
+      kind,
+      title: (row.title || titleFromLinkContext(row.content, row.url)).slice(0, 80),
+      url: row.url,
+      domain: row.domain || domainOf(row.canonical_url),
+      count: 0,
+      groups: new Set<string>(),
+      last_seen: row.time,
+      snippets: [],
+      sources: new Set<string>(),
+    };
+    bucket.count++;
+    bucket.groups.add(row.chatroom_id);
+    bucket.sources.add(row.source);
+    bucket.last_seen = bucket.last_seen > row.time ? bucket.last_seen : row.time;
+    if (clean) bucket.snippets.push(clean.slice(0, 80));
+    linkBuckets.set(key, bucket);
   }
 
   const mustRead = candidates
@@ -430,6 +465,7 @@ function buildLinkHighlights(
       groups: Set<string>;
       last_seen: string;
       snippets: string[];
+      sources: Set<string>;
     }
   >,
 ): DashboardLinkHighlight[] {
@@ -441,6 +477,7 @@ function buildLinkHighlights(
         title: item.title,
         url: item.url,
         domain: item.domain,
+        source: preferredLinkSource(item.sources),
         score,
         verdict: verdictForLink(item.kind, item.count, item.groups.size, item.snippets.join(' ')),
         count: item.count,
@@ -450,6 +487,13 @@ function buildLinkHighlights(
     })
     .sort((a, b) => b.score - a.score || b.last_seen.localeCompare(a.last_seen))
     .slice(0, MAX_LINK_HIGHLIGHTS);
+}
+
+function preferredLinkSource(sources: Set<string>): string {
+  if (sources.has('wechat_raw')) return 'wechat_raw';
+  if (sources.has('public_search')) return 'public_search';
+  if (sources.has('manual')) return 'manual';
+  return Array.from(sources)[0] ?? 'plain_url';
 }
 
 function buildPeopleRadar(
@@ -602,14 +646,6 @@ function minusDays(date: string, days: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function extractUrls(content: string): string[] {
-  const decoded = decodeHtml(content);
-  return Array.from(decoded.matchAll(URL_GLOBAL_RE))
-    .map((m) => cleanUrl(m[0]))
-    .filter(Boolean)
-    .slice(0, 6);
-}
-
 function cleanUrl(raw: string): string {
   return raw
     .replace(/[),，。；;!?！？、\]}>]+$/g, '')
@@ -645,7 +681,7 @@ function isArticleUrl(raw: string): boolean {
     if (host === 'mp.weixin.qq.com') return true;
     if ((host === 'x.com' || host === 'twitter.com') && /\/status\/\d{12,}/.test(u.pathname)) return true;
     if (host === 'youtube.com' || host === 'youtu.be') return true;
-    return /zhihu|toutiao|sohu|163\.com|qq\.com|medium\.com|substack\.com|juejin\.cn/i.test(host);
+    return /zhihu|toutiao|sohu|163\.com|qq\.com|medium\.com|substack\.com|juejin\.cn|podcasts\.apple\.com|podscan\.fm/i.test(host);
   } catch {
     return false;
   }

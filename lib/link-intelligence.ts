@@ -13,7 +13,7 @@ const TITLE_FETCH_TIMEOUT_MS = 1400;
 const MAX_TITLE_GENERATION_ITEMS = 80;
 const CODEX_TIMEOUT_MS = Number(process.env.WECHAT_RADAR_LINK_CODEX_TIMEOUT_MS ?? 180_000);
 const CODEX_MODEL = process.env.WECHAT_RADAR_CODEX_MODEL;
-const LINK_INTELLIGENCE_CACHE_VERSION = 'v6';
+const LINK_INTELLIGENCE_CACHE_VERSION = 'v8';
 const LINK_INTELLIGENCE_CACHE_TTL_SECONDS = 60 * 60 * 24;
 
 const TOOL_HINT_RE =
@@ -27,6 +27,10 @@ const ARTICLE_HOSTS = [
   'page.om.qq.com',
   'www.163.com',
   'mparticle.uc.cn',
+  'podcasts.apple.com',
+  'open.spotify.com',
+  'podcasters.spotify.com',
+  'podscan.fm',
 ];
 
 const TOOL_HOST_HINTS = [
@@ -61,6 +65,12 @@ interface MessageLinkRow {
   time: string;
   timestamp: number;
   type: string;
+  url: string;
+  canonical_url: string;
+  link_title: string | null;
+  domain: string;
+  source: string;
+  confidence: number;
 }
 
 export interface LinkIntelligenceItem {
@@ -80,6 +90,7 @@ export interface LinkIntelligenceItem {
     time: string;
     local_id: number;
     snippet: string;
+    source: string;
   }>;
   dedupe_key?: string;
 }
@@ -132,46 +143,6 @@ function decodeHtmlEntities(s: string): string {
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'");
-}
-
-function cleanUrl(raw: string): string {
-  return decodeHtmlEntities(raw)
-    .replace(/[),，。；;!?！？、\]}>]+$/g, '')
-    .replace(/\.{3,}$/g, '')
-    .trim();
-}
-
-function normalizeUrl(raw: string): string | null {
-  if (raw.includes('...') || raw.includes('…')) return null;
-  try {
-    const u = new URL(cleanUrl(raw));
-    u.hash = '';
-    for (const key of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content']) {
-      u.searchParams.delete(key);
-    }
-    return u.toString();
-  } catch {
-    return null;
-  }
-}
-
-function extractUrls(content: string): string[] {
-  const decoded = decodeHtmlEntities(content);
-  const urls = new Set<string>();
-
-  for (const m of decoded.matchAll(/imgsourceurl="([^"]+)"/g)) {
-    try {
-      urls.add(decodeURIComponent(m[1]));
-    } catch {
-      urls.add(m[1]);
-    }
-  }
-
-  for (const m of decoded.matchAll(/https?:\/\/[^\s<>"']+/g)) {
-    urls.add(cleanUrl(m[0]));
-  }
-
-  return Array.from(urls).filter(Boolean);
 }
 
 function domainOf(url: string): string {
@@ -532,11 +503,26 @@ export async function getDailyLinkIntelligence(
 
   const rows = db()
     .prepare(
-      `SELECT chatroom_id, local_id, sender, content, time, timestamp, type
-       FROM messages
-       WHERE date = ?
-         AND content LIKE '%http%'
-       ORDER BY timestamp DESC
+      `SELECT
+         m.chatroom_id,
+         m.local_id,
+         m.sender,
+         m.content,
+         m.time,
+         m.timestamp,
+         m.type,
+         ml.url,
+         ml.canonical_url,
+         ml.title AS link_title,
+         ml.domain,
+         ml.source,
+         ml.confidence
+       FROM message_links ml
+       JOIN messages m
+         ON m.chatroom_id = ml.chatroom_id
+        AND m.local_id = ml.local_id
+       WHERE ml.date = ?
+       ORDER BY ml.timestamp DESC
        LIMIT ?`,
     )
     .all(date, MAX_MESSAGES) as MessageLinkRow[];
@@ -548,10 +534,7 @@ export async function getDailyLinkIntelligence(
   const buckets = new Map<string, LinkIntelligenceItem>();
 
   for (const row of rows) {
-    for (const raw of extractUrls(row.content)) {
-      const canonical = normalizeUrl(raw);
-      if (!canonical) continue;
-
+      const canonical = row.canonical_url;
       const kind: LinkKind | null = isArticleLink(canonical)
         ? 'article'
         : isToolLink(canonical, row.content)
@@ -568,6 +551,7 @@ export async function getDailyLinkIntelligence(
         time: row.time,
         local_id: row.local_id,
         snippet: cleanSnippet(row.content),
+        source: row.source,
       };
 
       if (existing) {
@@ -581,10 +565,10 @@ export async function getDailyLinkIntelligence(
       } else {
         buckets.set(key, {
           kind,
-          url: raw,
+          url: row.url,
           canonical_url: canonical,
-          title: titleFromContext(row.content, raw),
-          domain: domainOf(canonical),
+          title: row.link_title || titleFromContext(row.content, row.url),
+          domain: row.domain || domainOf(canonical),
           count: 1,
           group_count: 1,
           first_seen: row.time,
@@ -592,7 +576,6 @@ export async function getDailyLinkIntelligence(
           sources: [source],
         });
       }
-    }
   }
 
   const sortItems = (kind: LinkKind, limit = MAX_ITEMS_PER_KIND) =>

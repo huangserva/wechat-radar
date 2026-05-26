@@ -84,6 +84,34 @@ function migrate(d: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp DESC);
     CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender);
 
+    CREATE TABLE IF NOT EXISTS message_links (
+      chatroom_id TEXT NOT NULL,
+      local_id INTEGER NOT NULL,
+      date TEXT NOT NULL,
+      sender TEXT NOT NULL,
+      time TEXT NOT NULL,
+      timestamp INTEGER NOT NULL,
+      url TEXT NOT NULL,
+      canonical_url TEXT NOT NULL,
+      title TEXT,
+      description TEXT,
+      domain TEXT NOT NULL,
+      source TEXT NOT NULL,
+      raw_kind TEXT NOT NULL,
+      confidence REAL NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (chatroom_id, local_id, canonical_url)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_message_links_date
+      ON message_links(date, timestamp DESC);
+    CREATE INDEX IF NOT EXISTS idx_message_links_canonical
+      ON message_links(canonical_url);
+    CREATE INDEX IF NOT EXISTS idx_message_links_domain
+      ON message_links(domain);
+    CREATE INDEX IF NOT EXISTS idx_message_links_source
+      ON message_links(source);
+
     CREATE TABLE IF NOT EXISTS topics (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       date TEXT NOT NULL,
@@ -115,6 +143,9 @@ function migrate(d: Database.Database) {
       PRIMARY KEY (date, version)
     );
 
+    CREATE INDEX IF NOT EXISTS idx_link_intelligence_cache_generated
+      ON link_intelligence_cache(generated_at DESC);
+
     CREATE TABLE IF NOT EXISTS sync_state (
       chatroom_id TEXT PRIMARY KEY,
       last_synced_at INTEGER NOT NULL,
@@ -136,30 +167,50 @@ function migrate(d: Database.Database) {
   ensureColumn(d, 'sync_state', 'total_chunks', 'INTEGER NOT NULL DEFAULT 0');
 }
 
-function ensureColumn(d: Database.Database, table: string, name: string, definition: string) {
+function ensureColumn(
+  d: Database.Database,
+  table: string,
+  name: string,
+  definition: string,
+) {
   const rows = d.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   if (rows.some((r) => r.name === name)) return;
   d.prepare(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`).run();
 }
 
-const SEED_VERSION = 'wechat_radar_v1_2026_05_24';
+const SEED_VERSION = 'qiaomu_v2_2026_05_23';
 
 const DEFAULT_GROUPS: Array<{ name: string; color: string; emoji: string }> = [
-  { name: 'AI / Coding', color: '#7dd3a8', emoji: '💻' },
-  { name: 'Tools', color: '#f59e0b', emoji: '🛠️' },
-  { name: 'Articles', color: '#06b6d4', emoji: '📚' },
-  { name: 'Business', color: '#10b981', emoji: '💼' },
-  { name: 'Events', color: '#f97316', emoji: '📅' },
-  { name: 'Research', color: '#a855f7', emoji: '🔬' },
-  { name: 'Lifestyle', color: '#fb7185', emoji: '🏠' },
+  { name: 'AI产品蝗虫团', color: '#ef4444', emoji: '🐝' },
+  { name: '自营/读者群', color: '#22c55e', emoji: '🌟' },
+  { name: 'WaytoAGI', color: '#06b6d4', emoji: '🛸' },
+  { name: 'HowOneAI', color: '#0ea5e9', emoji: '🚀' },
+  { name: 'Vibe Coding · 编程', color: '#6366f1', emoji: '💻' },
+  { name: 'AIGC · 内容创作', color: '#ec4899', emoji: '🎨' },
+  { name: 'AI 学术', color: '#a855f7', emoji: '🎓' },
+  { name: 'AI 商业 · 营销', color: '#10b981', emoji: '💰' },
+  { name: 'AI 工具用户群', color: '#f59e0b', emoji: '🛠️' },
+  { name: '付费社区', color: '#eab308', emoji: '💎' },
+  { name: 'AI 圈社交', color: '#8b5cf6', emoji: '🤖' },
+  { name: '大佬 · 媒体圈', color: '#f97316', emoji: '📰' },
+  { name: '行业活动', color: '#22d3ee', emoji: '🎯' },
+  { name: '生活 · 兴趣', color: '#fb7185', emoji: '🏘️' },
 ];
 
 function seed(d: Database.Database) {
-  const meta = d.prepare("SELECT value FROM meta WHERE key = 'seed_version'").get() as { value: string } | undefined;
+  const meta = d
+    .prepare("SELECT value FROM meta WHERE key = 'seed_version'")
+    .get() as { value: string } | undefined;
+
   if (meta?.value === SEED_VERSION) return;
 
+  // Check if any groups have user tags — if so, leave them alone (additive seed).
   const tagged = d.prepare('SELECT COUNT(*) AS n FROM group_tags').get() as { n: number };
-  if (tagged.n === 0) d.prepare('DELETE FROM groups').run();
+
+  if (tagged.n === 0) {
+    // Safe to wipe and re-seed.
+    d.prepare('DELETE FROM groups').run();
+  }
 
   const now = Date.now();
   const insertOrIgnore = d.prepare(
@@ -169,5 +220,7 @@ function seed(d: Database.Database) {
     DEFAULT_GROUPS.forEach((g, i) => insertOrIgnore.run(g.name, g.color, g.emoji, i, now));
   })();
 
-  d.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('seed_version', ?)").run(SEED_VERSION);
+  d.prepare(
+    "INSERT OR REPLACE INTO meta (key, value) VALUES ('seed_version', ?)",
+  ).run(SEED_VERSION);
 }

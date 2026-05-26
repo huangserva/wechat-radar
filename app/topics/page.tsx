@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import Sidebar from '@/components/Sidebar';
 import MessageContent from '@/components/MessageContent';
@@ -42,6 +42,7 @@ export default function TopicsPage() {
   const [detail, setDetail] = useState<{ topic: Topic; messages: TopicMessage[] } | null>(null);
   const [busy, setBusy] = useState(false);
   const [info, setInfo] = useState<string | undefined>(undefined);
+  const autoBuildDates = useRef(new Set<string>());
 
   const reload = useCallback(async () => {
     try {
@@ -148,11 +149,17 @@ export default function TopicsPage() {
     }
   }, [date, reload]);
 
+  useEffect(() => {
+    if (busy || topics.length > 0 || autoBuildDates.current.has(date)) return;
+    autoBuildDates.current.add(date);
+    build();
+  }, [build, busy, date, topics.length]);
+
   return (
     <div className="flex h-screen">
       <Sidebar />
       <main className="flex flex-1 flex-col overflow-hidden">
-        <div className="flex items-center justify-between border-b border-[var(--border-soft)] bg-[rgba(8,13,10,0.74)] px-6 py-3 backdrop-blur">
+        <div className="flex items-center justify-between border-b border-[var(--border-soft)] bg-[var(--chrome-bg)] px-6 py-3 backdrop-blur">
           <div>
             <div className="report-kicker">Cross-Group Topics</div>
             <div className="flex items-center gap-2 text-[15px] font-semibold">
@@ -170,7 +177,7 @@ export default function TopicsPage() {
                 type="date"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
-                className="bg-transparent text-[12px] outline-none [color-scheme:dark]"
+                className="theme-date-input bg-transparent text-[12px] outline-none"
               />
             </div>
             <button className={`btn ${busy ? 'btn-warn' : 'btn-primary'}`} onClick={build} disabled={busy}>
@@ -184,7 +191,7 @@ export default function TopicsPage() {
           <div className="overflow-y-auto border-r border-[var(--border-soft)] p-4">
             {topics.length === 0 ? (
               <div className="py-16 text-center text-[12px] text-[var(--text-3)]">
-                当日还没构建话题 · 点击「构建话题」
+                {busy ? '正在自动构建当日话题…' : '当日暂无可聚合话题'}
               </div>
             ) : (
               <div className="space-y-2">

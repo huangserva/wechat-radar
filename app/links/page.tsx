@@ -22,6 +22,7 @@ type LinkInsight = {
     time: string;
     local_id: number;
     snippet: string;
+    source: string;
   }>;
 };
 
@@ -30,6 +31,20 @@ type LinkInsightResp = {
   date: string;
   articles: LinkInsight[];
   tools: LinkInsight[];
+};
+
+type RawWechatLink = {
+  chatroom_id: string;
+  chat_name: string;
+  local_id: number;
+  sender: string;
+  time: string;
+  url: string;
+  canonical_url: string;
+  title: string | null;
+  domain: string;
+  source: string;
+  raw_kind: string;
 };
 
 function localToday(): string {
@@ -43,6 +58,7 @@ function localToday(): string {
 export default function LinksPage() {
   const [date, setDate] = useState(() => localToday());
   const [links, setLinks] = useState<LinkInsightResp | null>(null);
+  const [rawLinks, setRawLinks] = useState<RawWechatLink[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
@@ -52,6 +68,11 @@ export default function LinksPage() {
         const r = await fetch(`/api/topics/links?date=${date}`);
         const j = (await r.json()) as LinkInsightResp;
         if (!cancelled && j.ok) setLinks(j);
+      } catch {}
+      try {
+        const r = await fetch(`/api/message-links/raw?date=${date}`, { cache: 'no-store' });
+        const j = (await r.json()) as { ok: boolean; links?: RawWechatLink[] };
+        if (!cancelled && j.ok) setRawLinks(j.links ?? []);
       } catch {}
     })();
     return () => {
@@ -76,7 +97,7 @@ export default function LinksPage() {
     <div className="flex h-screen">
       <Sidebar />
       <main className="flex flex-1 flex-col overflow-hidden">
-        <div className="flex items-center justify-between border-b border-[var(--border-soft)] bg-[rgba(8,13,10,0.74)] px-6 py-3 backdrop-blur">
+        <div className="flex items-center justify-between border-b border-[var(--border-soft)] bg-[var(--chrome-bg)] px-6 py-3 backdrop-blur">
           <div>
             <div className="report-kicker">Link Intelligence</div>
             <div className="flex items-center gap-2 text-[15px] font-semibold">
@@ -96,7 +117,7 @@ export default function LinksPage() {
                 type="date"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
-                className="bg-transparent text-[12px] outline-none [color-scheme:dark]"
+                className="theme-date-input bg-transparent text-[12px] outline-none"
               />
             </div>
             <button
@@ -112,7 +133,7 @@ export default function LinksPage() {
           </div>
         </div>
 
-        <div className="grid flex-1 grid-cols-1 gap-5 overflow-hidden p-5 xl:grid-cols-2">
+        <div className="grid flex-1 grid-cols-1 gap-5 overflow-hidden p-5 xl:grid-cols-3">
           <LinkInsightPanel
             title="文章链接"
             icon={<Newspaper size={14} className="text-[var(--accent)]" />}
@@ -129,9 +150,65 @@ export default function LinksPage() {
             loading={loading}
             empty="当天还没有工具链接"
           />
+          <RawWechatPanel date={date} items={loading ? [] : rawLinks} loading={loading} />
         </div>
       </main>
     </div>
+  );
+}
+
+function RawWechatPanel({
+  date,
+  items,
+  loading,
+}: {
+  date: string;
+  items: RawWechatLink[];
+  loading: boolean;
+}) {
+  return (
+    <section className="card flex min-h-0 min-w-0 flex-col">
+      <div className="flex items-center justify-between border-b border-[var(--border-soft)] px-3 py-2">
+        <div className="flex items-center gap-2 text-[12px] font-semibold">
+          <ExternalLink size={14} className="text-[var(--accent)]" />
+          <span>微信文章链接</span>
+        </div>
+        <div className="text-[10px] text-[var(--text-3)]">{loading ? '加载中' : `${items.length} 条`}</div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+        {loading ? (
+          <div className="py-16 text-center text-[11px] text-[var(--text-3)]">加载中…</div>
+        ) : items.length === 0 ? (
+          <div className="py-16 text-center text-[11px] text-[var(--text-3)]">当天没有解析到微信文章链接</div>
+        ) : (
+          <div className="space-y-1.5">
+            {items.map((item) => (
+              <div key={`${item.chatroom_id}:${item.local_id}:${item.canonical_url}`} className="rounded-md border border-transparent px-2 py-2 hover:border-[var(--border-soft)] hover:bg-[var(--surface-2)]">
+                <a href={item.url} target="_blank" rel="noreferrer" className="group block min-w-0" title={item.url}>
+                  <div className="line-clamp-2 text-[12px] font-medium leading-snug text-[var(--text)] group-hover:text-[var(--accent)]">
+                    {item.title || item.domain || item.raw_kind}
+                  </div>
+                  <div className="mt-1 break-all text-[10px] leading-snug text-[var(--text-3)]">
+                    {item.url}
+                  </div>
+                </a>
+                <div className="mt-1 flex items-center justify-between gap-2 text-[10px] text-[var(--text-3)]">
+                  <Link
+                    href={`/groups/${encodeURIComponent(item.chatroom_id)}?date=${date}`}
+                    className="min-w-0 truncate text-[var(--text-2)] hover:text-[var(--accent)]"
+                  >
+                    {item.chat_name} · {item.sender}
+                  </Link>
+                  <span className="shrink-0 rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-[var(--accent)]">
+                    {item.raw_kind}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -191,7 +268,10 @@ function LinkInsightRow({ item, date }: { item: LinkInsight; date: string }) {
           <span className="line-clamp-2 text-[12px] font-medium leading-snug text-[var(--text)] group-hover:text-[var(--accent)]">
             {item.title}
           </span>
-          <span className="mt-1 block truncate text-[10px] text-[var(--text-3)]">{item.domain}</span>
+          <span className="mt-1 flex min-w-0 items-center gap-2 text-[10px] text-[var(--text-3)]">
+            <span className={sourceClass(first?.source)}>{sourceLabel(first?.source)}</span>
+            <span className="truncate">{item.domain}</span>
+          </span>
         </span>
         <ExternalLink size={12} className="mt-0.5 shrink-0 text-[var(--text-3)] group-hover:text-[var(--accent)]" />
       </a>
@@ -213,4 +293,18 @@ function LinkInsightRow({ item, date }: { item: LinkInsight; date: string }) {
       )}
     </div>
   );
+}
+
+function sourceLabel(source?: string): string {
+  if (source === 'wechat_raw') return '微信原文';
+  if (source === 'public_search') return '公开补链';
+  if (source === 'manual') return '手动补链';
+  return '网页链接';
+}
+
+function sourceClass(source?: string): string {
+  const base = 'shrink-0 rounded px-1.5 py-0.5';
+  if (source === 'wechat_raw') return `${base} bg-[var(--accent-soft)] text-[var(--accent)]`;
+  if (source === 'public_search' || source === 'manual') return `${base} bg-[var(--warn-soft)] text-[var(--warn)]`;
+  return `${base} bg-[var(--surface-2)] text-[var(--text-3)]`;
 }

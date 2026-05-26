@@ -9,21 +9,21 @@ const glob = (fsp as unknown as {
 }).glob;
 
 const WX_CACHE_ROOT = join(
-  /*turbopackIgnore: true*/ homedir(),
+  homedir(),
   'Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files',
 );
 
 let _userDirCache: string | null = null;
 
-/** 找到当前微信用户目录（取最近修改的） */
+/** 找到当前登录微信用户目录（取最近修改的） */
 function findUserDir(): string | null {
-  if (_userDirCache && existsSync(/*turbopackIgnore: true*/ _userDirCache)) return _userDirCache;
-  if (!existsSync(/*turbopackIgnore: true*/ WX_CACHE_ROOT)) return null;
-  const entries = readdirSync(/*turbopackIgnore: true*/ WX_CACHE_ROOT, { withFileTypes: true })
+  if (_userDirCache && existsSync(_userDirCache)) return _userDirCache;
+  if (!existsSync(WX_CACHE_ROOT)) return null;
+  const entries = readdirSync(WX_CACHE_ROOT, { withFileTypes: true })
     .filter((e) => e.isDirectory() && e.name !== 'all_users' && e.name !== 'Backup')
     .map((e) => {
-      const p = join(/*turbopackIgnore: true*/ WX_CACHE_ROOT, e.name);
-      return { p, mtime: statSync(/*turbopackIgnore: true*/ p).mtimeMs };
+      const p = join(WX_CACHE_ROOT, e.name);
+      return { p, mtime: statSync(p).mtimeMs };
     })
     .sort((a, b) => b.mtime - a.mtime);
   if (entries.length === 0) return null;
@@ -33,9 +33,9 @@ function findUserDir(): string | null {
 
 /** 列出按月分的子目录，按时间倒序（最近月份优先） */
 function listMonthDirs(userDir: string): string[] {
-  const cacheDir = join(/*turbopackIgnore: true*/ userDir, 'cache');
-  if (!existsSync(/*turbopackIgnore: true*/ cacheDir)) return [];
-  return readdirSync(/*turbopackIgnore: true*/ cacheDir)
+  const cacheDir = join(userDir, 'cache');
+  if (!existsSync(cacheDir)) return [];
+  return readdirSync(cacheDir)
     .filter((d) => /^\d{4}-\d{2}$/.test(d))
     .sort((a, b) => b.localeCompare(a));
 }
@@ -49,7 +49,7 @@ export interface ResolvedImage {
 /** 检测文件 magic bytes */
 function detectFormat(path: string): ResolvedImage['format'] {
   try {
-    const fd = readFileSync(/*turbopackIgnore: true*/ path, { flag: 'r' });
+    const fd = readFileSync(path, { flag: 'r' });
     const h = fd.subarray(0, 4);
     if (h[0] === 0xff && h[1] === 0xd8) return 'jpeg';
     if (h[0] === 0x89 && h[1] === 0x50 && h[2] === 0x4e && h[3] === 0x47) return 'png';
@@ -69,8 +69,8 @@ async function buildMonthIndex(userDir: string, month: string): Promise<void> {
   if (existing) return existing;
 
   const p = (async () => {
-    const monthRoot = join(/*turbopackIgnore: true*/ userDir, 'cache', month, 'Message');
-    if (!existsSync(/*turbopackIgnore: true*/ monthRoot)) {
+    const monthRoot = join(userDir, 'cache', month, 'Message');
+    if (!existsSync(monthRoot)) {
       monthIndexCache.set(month, new Map());
       return;
     }
@@ -89,13 +89,13 @@ async function buildMonthIndex(userDir: string, month: string): Promise<void> {
     };
 
     for await (const p of glob('*/ImageTemp/*hd_temp_convert', { cwd: monthRoot })) {
-      consider(join(/*turbopackIgnore: true*/ monthRoot, String(p)), 'hd');
+      consider(join(monthRoot, String(p)), 'hd');
     }
     for await (const p of glob('*/ImageTemp/*mid_temp_convert', { cwd: monthRoot })) {
-      consider(join(/*turbopackIgnore: true*/ monthRoot, String(p)), 'mid');
+      consider(join(monthRoot, String(p)), 'mid');
     }
     for await (const p of glob('*/Thumb/*thumb.jpg', { cwd: monthRoot })) {
-      consider(join(/*turbopackIgnore: true*/ monthRoot, String(p)), 'thumb');
+      consider(join(monthRoot, String(p)), 'thumb');
     }
     monthIndexCache.set(month, idx);
   })();

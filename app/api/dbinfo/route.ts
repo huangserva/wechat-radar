@@ -1,13 +1,13 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { homedir } from 'node:os';
+import { DATA_DIR } from '@/lib/config';
 import { join } from 'node:path';
 import { existsSync, statSync } from 'node:fs';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  const dataDir = process.env.WECHAT_RADAR_DATA_DIR ?? join(homedir(), '.wechat-radar');
+  const dataDir = DATA_DIR;
   const dbPath = join(dataDir, 'radar.db');
   const dbSize = existsSync(dbPath) ? statSync(dbPath).size : 0;
   const counts = {

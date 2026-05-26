@@ -42,19 +42,35 @@ type TopicWithMembers = {
 };
 
 function cleanContent(s: string): string {
-  return s
+  const text = s
     .replace(/\[图片\]\s*local_id=\d+/g, '')
-    .replace(/\[引用\][^\n]*\n?/g, '')
     .replace(/\[小程序\][^\n]*/g, '')
-    .replace(/↳\s*[^\n]*/g, '')
     .replace(/<\?xml[\s\S]+?\?>[\s\S]*?<\/msg>/g, '')
+    .replace(/\[(?:链接|链接\/文件)\]\s*(?:当前(?:微信)?版本不支持展示该内容，请升级至?最新(?:版|版本)|当前版本不支持展示该内容，请升级至最新版本)[。.]?/gi, ' ')
+    .replace(/当前(?:微信)?版本不支持展示该内容，请升级至?最新(?:版|版本)[。.]?/gi, ' ')
     .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/\b[a-f0-9]{24,}\b/gi, ' ')
+    .replace(/\b\d{12,}\b/g, ' ')
     .trim();
+
+  const parts = text
+    .split(/↳|\\n|\n/)
+    .map((part) =>
+      part
+        .replace(/^\[引用\]\s*/g, '')
+        .replace(/^\[(?:链接|链接\/文件|图片|视频|表情)\]\s*/g, '')
+        .replace(/\s+/g, ' ')
+        .trim(),
+    )
+    .filter((part) => part.length >= MIN_MESSAGE_LENGTH && !isPlaceholderTitle(part));
+
+  return parts[0] ?? text.replace(/\s+/g, ' ').trim();
 }
 
 // 这些消息整体就是占位符 / wrapper，无实质内容
 const PLACEHOLDER_PATTERNS = [
-  /^\[链接\]\s*当前版本不支持/,
+  /^\[链接\]\s*当前(?:微信)?版本不支持/,
+  /^当前(?:微信)?版本不支持展示该内容，请升级至?最新(?:版|版本)[。.]?$/,
   /^\[文件\]\s*[^\s]+\.\w+\s*$/,
   /^\[视频\]\s*$/,
   /^\[音频\]\s*$/,
@@ -70,7 +86,16 @@ const PLACEHOLDER_PATTERNS = [
 
 function isPlaceholderOnly(content: string): boolean {
   if (!content) return true;
-  return PLACEHOLDER_PATTERNS.some((p) => p.test(content));
+  return PLACEHOLDER_PATTERNS.some((p) => p.test(content)) || isPlaceholderTitle(content);
+}
+
+function isPlaceholderTitle(value: string): boolean {
+  const text = value
+    .replace(/^\[(?:链接|链接\/文件|图片|视频|表情)\]\s*/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return true;
+  return /^(?:当前(?:微信)?版本不支持展示该内容，请升级至?最新(?:版|版本)|当前版本不支持|请升级至最新版本)[。.]?$/i.test(text);
 }
 
 function loadCandidateMessages(date: string): SourceMsg[] {
@@ -237,6 +262,8 @@ function buildExtractionPrompt(
 - 合并同一事件、产品、工具、论文、观点、问题及其追问/回应/转述。
 - 优先保留跨群出现的话题；同一群内高密度连续讨论也可以保留。
 - 忽略问候、纯闲聊、广告、无上下文碎片、纯占位内容和过泛的「AI 很火」类讨论。
+- 严禁把「当前版本不支持展示该内容」「当前微信版本不支持展示该内容」「请升级至最新版本」这类微信占位文案当作话题标题或摘要。
+- 遇到链接/视频/小程序占位时，只能根据前后文里真正有人讨论的对象命名；没有可读上下文就丢弃。
 - 每个话题至少包含 ${MIN_MESSAGES_PER_TOPIC} 条消息。
 - 最多输出 ${maxTopics} 个话题，按重要性排序。
 - title 用 8-15 个汉字，优先写产品名/事件名/讨论焦点。
@@ -268,6 +295,7 @@ function buildMergePrompt(date: string, drafts: LlmTopic[], maxTopics: number): 
 任务要求：
 - 合并语义相同或强相关的话题草稿，message_ids 取并集。
 - 删除过泛、重复、证据不足的话题。
+- 删除微信升级提示、资源封面、头像链接、无语义数字串等占位话题。
 - 每个最终话题至少包含 ${MIN_MESSAGES_PER_TOPIC} 条消息。
 - 最多输出 ${maxTopics} 个最终话题，按重要性排序。
 - title 用 8-15 个汉字，summary 用 1-2 句中文。
@@ -294,7 +322,7 @@ function normalizeTopics(rawTopics: LlmTopic[], messageMap: Map<string, SourceMs
     seenSignatures.add(signature);
 
     out.push({
-      title: (raw.title || members[0].content.slice(0, 16) || '未命名话题').slice(0, 80),
+      title: cleanTopicTitle(raw.title, members),
       summary: (raw.summary || '').slice(0, 400),
       members,
       groupSet: new Set(members.map((m) => m.chatroom_id)),
@@ -302,6 +330,17 @@ function normalizeTopics(rawTopics: LlmTopic[], messageMap: Map<string, SourceMs
   }
 
   return out.sort((a, b) => b.members.length - a.members.length).slice(0, MAX_TOPICS_TO_SAVE);
+}
+
+function cleanTopicTitle(title: string, members: SourceMsg[]): string {
+  const cleaned = cleanContent(title || '');
+  if (cleaned && !isPlaceholderTitle(cleaned)) return cleaned.slice(0, 80);
+  const candidate = members
+    .slice()
+    .sort((a, b) => b.content.length - a.content.length)
+    .map((m) => cleanContent(m.content))
+    .find((text) => text.length >= 8 && !isPlaceholderTitle(text));
+  return (candidate || '未命名话题').slice(0, 80);
 }
 
 async function aggregateWithCodex(

@@ -6,7 +6,18 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import MessageContent from '@/components/MessageContent';
-import { ArrowLeft, BarChart3, Calendar, History, ListFilter, MessageSquare, Star, Trophy } from 'lucide-react';
+import {
+  ArrowLeft,
+  BarChart3,
+  Calendar,
+  Check,
+  Copy,
+  History,
+  ListFilter,
+  MessageSquare,
+  Star,
+  Trophy,
+} from 'lucide-react';
 import type { EChartsOption } from 'echarts';
 
 const ReactECharts = dynamicImport(() => import('echarts-for-react'), { ssr: false });
@@ -60,6 +71,7 @@ export default function GroupDetailPage({
   const [fav, setFav] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const load = async (d: string) => {
     setLoading(true);
@@ -110,6 +122,24 @@ export default function GroupDetailPage({
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ chatroom_id: chatroomId, fav: next }),
     });
+  };
+
+  const copyMessages = async () => {
+    const messages = data?.recent ?? [];
+    if (messages.length === 0) return;
+    const title = data?.stats?.chat ?? chatroomId;
+    const text = [
+      `# ${title} ${date}`,
+      '',
+      ...messages.map((m) => {
+        const time = m.time.slice(11, 16);
+        const content = m.content.replace(/\s+/g, ' ').trim();
+        return `[${time}] ${m.sender}: ${content}`;
+      }),
+    ].join('\n');
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
   };
 
   const hourOption: EChartsOption | null = data?.stats
@@ -177,20 +207,11 @@ export default function GroupDetailPage({
         }
       : null;
 
-  const dateOptions = useMemo(() => {
-    if (!data?.daily_history) return [];
-    return data.daily_history
-      .filter((d) => d.total > 0 || d.date === date)
-      .map((d) => d.date)
-      .sort()
-      .reverse();
-  }, [data, date]);
-
   return (
     <div className="flex h-screen">
       <Sidebar />
       <main className="flex flex-1 flex-col overflow-hidden">
-        <div className="flex items-center justify-between border-b border-[var(--border-soft)] bg-[rgba(8,13,10,0.74)] px-6 py-3 backdrop-blur">
+        <div className="flex items-center justify-between border-b border-[var(--border-soft)] bg-[var(--chrome-bg)] px-6 py-3 backdrop-blur">
           <div className="flex items-center gap-3 min-w-0">
             <Link href="/" className="shrink-0 text-[var(--text-3)] hover:text-[var(--text)]">
               <ArrowLeft size={16} />
@@ -208,27 +229,12 @@ export default function GroupDetailPage({
           <div className="flex items-center gap-2">
             <div className="control-surface flex items-center gap-1.5 rounded-md px-2.5 py-1.5">
               <Calendar size={13} className="text-[var(--text-3)]" />
-              {dateOptions.length > 0 ? (
-                <select
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="bg-transparent text-[12px] outline-none"
-                >
-                  {!dateOptions.includes(date) && <option value={date}>{date}（未扫描）</option>}
-                  {dateOptions.map((d) => (
-                    <option key={d} value={d}>
-                      {d}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="bg-transparent text-[12px] outline-none [color-scheme:dark]"
-                />
-              )}
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="theme-date-input bg-transparent text-[12px] outline-none"
+              />
             </div>
             <button className={`btn ${fav ? 'btn-warn' : ''}`} onClick={toggleFav}>
               <Star size={13} />
@@ -326,8 +332,19 @@ export default function GroupDetailPage({
                 <MessageSquare size={14} className="text-[var(--accent)]" />
                 {date} 完整消息
               </div>
-              <div className="text-[11px] text-[var(--text-3)]">
-                {loading ? '加载中…' : `共 ${data?.recent.length ?? 0} 条`}
+              <div className="flex items-center gap-2">
+                <button
+                  className="btn py-1 text-[12px]"
+                  onClick={copyMessages}
+                  disabled={loading || (data?.recent.length ?? 0) === 0}
+                  title="复制当日完整消息"
+                >
+                  {copied ? <Check size={13} /> : <Copy size={13} />}
+                  <span>{copied ? '已复制' : '复制'}</span>
+                </button>
+                <div className="text-[11px] text-[var(--text-3)]">
+                  {loading ? '加载中…' : `共 ${data?.recent.length ?? 0} 条`}
+                </div>
               </div>
             </div>
             {!loading && data?.recent && data.recent.length === 0 ? (

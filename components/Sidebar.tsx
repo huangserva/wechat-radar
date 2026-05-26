@@ -8,11 +8,10 @@ import {
   Folder,
   Inbox,
   LayoutDashboard,
-  Activity,
   Sparkles,
   Link2,
-  Settings,
 } from 'lucide-react';
+import ThemeToggle from './ThemeToggle';
 
 type Category = {
   id: number;
@@ -68,21 +67,16 @@ export default function Sidebar() {
   }, []);
 
   return (
-    <aside className="flex h-screen w-[236px] shrink-0 flex-col border-r border-[var(--border-soft)] bg-[rgba(10,16,12,0.86)] backdrop-blur">
+    <aside className="flex h-screen w-[236px] shrink-0 flex-col border-r border-[var(--border-soft)] bg-[var(--sidebar-bg)] backdrop-blur">
       <div className="border-b border-[var(--border-soft)] px-4 py-4">
         <div className="flex items-center justify-between">
           <Link href="/" className="min-w-0">
-            <div className="report-kicker">WeChat Radar</div>
+            <div className="report-kicker">Qiaomu Radar</div>
             <div className="mt-1 text-[15px] font-semibold tracking-wide text-[var(--text)]">
-              微信雷达
+              微信群聊情报
             </div>
           </Link>
-          <button
-            className="rounded-md p-1 text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
-            aria-label="设置"
-          >
-            <Settings size={16} />
-          </button>
+          <ThemeToggle />
         </div>
         <div className="mt-2 text-[11px] text-[var(--text-3)]">私有看板 · 高信号优先</div>
       </div>
@@ -94,13 +88,6 @@ export default function Sidebar() {
           label="看板"
           badge="Brief"
           active={pathname === '/'}
-        />
-        <NavItem
-          href="/signals"
-          icon={<Activity size={15} />}
-          label="信号流"
-          badge="Live"
-          active={pathname === '/signals'}
         />
         <NavItem
           href="/topics"

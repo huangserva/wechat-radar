@@ -1,120 +1,186 @@
-# 微信雷达（WeChat Radar）
+# WeChat Radar
 
-本地优先的微信群聊情报看板。它从本机 `wx-cli` 或 demo 数据中提取趋势、关键链接、行动机会、人物雷达和内容选题，帮助你从大量微信群消息里发现真正有用的信号。
+> 群太多，真正有价值的消息却总是被淹没。
+> WeChat Radar turns noisy WeChat groups into a local-first intelligence dashboard.
 
-## 特性
+[![GitHub stars](https://img.shields.io/github/stars/joeseesun/wechat-radar?style=social)](https://github.com/joeseesun/wechat-radar/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/joeseesun/wechat-radar?style=social)](https://github.com/joeseesun/wechat-radar/network/members)
+[![Issues](https://img.shields.io/github/issues/joeseesun/wechat-radar)](https://github.com/joeseesun/wechat-radar/issues)
+[![Last commit](https://img.shields.io/github/last-commit/joeseesun/wechat-radar)](https://github.com/joeseesun/wechat-radar/commits/main)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-- 首页情报工作台：今日值得出手、趋势升温、异常信号、链接精选、人物雷达、内容选题。
-- 链接情报：聚合最近一天出现的文章、工具和资源，按重复度和跨群扩散排序。
-- 话题雷达：按日期构建跨群话题，并查看相关原始消息。
-- 群列表与群详情：查看群活跃度、每日趋势、Top 发言人和完整消息。
-- 本地 SQLite：默认数据目录 `~/.wechat-radar`。
-- 首次启动向导：配置你的微信名、检查 `wx-cli`、确认隐私、可一键使用示例数据。
+![WeChat Radar product preview](docs/assets/product-preview.svg)
 
-## 运行要求
+**[中文](#中文) | [English](#english)**
 
-- macOS
-- Node.js 20+
-- pnpm
-- 可选：[`wx-cli`](https://github.com/jackwener/wx-cli)，用于读取本机微信数据
+---
 
-没有 `wx-cli` 也可以使用 demo 模式预览界面。
+<a name="中文"></a>
+
+## 中文
+
+WeChat Radar 是一个本地优先的微信群聊情报看板。它把群消息、话题、链接、@我的消息和高信号人物聚合成一个可按日期查看的工作台。
+
+你得到的不是“聊天记录列表”，而是每天可以直接处理的情报：
+
+- 今日优先看：消息、文章、工具、异动分区展示
+- 话题雷达：用 Codex CLI 按天聚合跨群话题
+- 链接情报：文章/工具资源去重，生成可读标题
+- 群日报：每天活跃群可生成摘要报告，方便复制给 AI 继续处理
+- 本地存储：聊天数据落到你自己的 SQLite，不上传到第三方服务
+- 明暗主题：默认奶白色浅色主题，也支持深色模式
 
 ## 快速开始
 
 ```bash
+git clone https://github.com/joeseesun/wechat-radar.git
+cd wechat-radar
 pnpm install
 pnpm rebuild better-sqlite3
 pnpm dev
 ```
 
-访问 [http://localhost:3000](http://localhost:3000)。首次访问会进入 `/setup`。
+打开 [http://localhost:3000](http://localhost:3000)。首次进入会跳到 `/setup`，按页面提示填写你的微信名、确认隐私说明，也可以先启用 demo 数据体验。
 
-## Demo 模式
+## 前置条件
 
-如果你还没有配置 `wx-cli`，可以在 `/setup` 勾选“使用示例数据体验”。也可以命令行生成示例数据：
+- [ ] macOS，且已登录微信 4.x
+- [ ] Node.js 20+：`node --version`
+- [ ] pnpm：`corepack enable && pnpm --version`
+- [ ] wx-cli：`wx --version`
+- [ ] wx daemon 正在运行：`wx daemon status`
+- [ ] 如果要让话题聚合更好，安装并登录 Codex CLI：`codex --version`
 
-```bash
-pnpm demo:seed
-pnpm dev
-```
-
-示例数据会写入 `~/.wechat-radar/radar.db`。
+wx-cli 可参考原项目安装与初始化：[jackwener/wx-cli](https://github.com/jackwener/wx-cli)。
 
 ## 配置
 
-可以通过 `.env.local` 配置：
+默认数据目录是 `~/.wechat-radar/`，不会写进项目目录。
 
-```env
+你可以用环境变量覆盖：
+
+```bash
+cp .env.example .env.local
+```
+
+常用配置：
+
+```bash
 WECHAT_RADAR_DATA_DIR=~/.wechat-radar
-WECHAT_RADAR_MY_NAMES=你的微信名,你的群昵称
+WECHAT_RADAR_MY_NAMES=张三,San Zhang,zhangsan
 WECHAT_RADAR_DEMO=0
 WECHAT_RADAR_CODEX_MODEL=
 ```
 
-也可以在首次启动向导中配置，配置会保存在：
+也可以直接在 `/setup` 页面配置。配置会写入 `~/.wechat-radar/config.json`。
+
+## 使用方式
+
+1. 进入首页，选择日期或时间范围。
+2. 点击“重扫”同步当前范围消息。
+3. 点击“全量同步”拉取更长历史。
+4. 打开“话题雷达”查看跨群主题。
+5. 打开“链接情报”查看文章和工具资源。
+6. 在活跃群列表点击“日报”查看单群日报。
+
+你可以这样和 AI 配合：
+
+- “把今天所有 Codex 相关话题整理成一篇博客大纲。”
+- “复制这个群日报，帮我提炼值得回复的机会。”
+- “把链接情报里的工具做成一张试用优先级表。”
+
+## 数据与隐私
+
+WeChat Radar 默认只在本机读写数据：
+
+- `~/.wechat-radar/radar.db`：SQLite 主数据库
+- `~/.wechat-radar/config.json`：本地配置
+- `~/.wechat-radar/backups/`：可选备份
+
+安全设计：
+
+- wx-cli 调用使用 `child_process.execFile` 参数数组，不拼 shell
+- SQLite 使用 prepared statements
+- 页面只以 React 文本节点渲染聊天内容
+- 不把微信密钥、会话、数据库、模型缓存提交进仓库
+
+重要提醒：这个项目会读取你本机微信数据。请确认你的使用方式符合微信客户端规则、当地法律、群成员隐私预期和你所在组织的合规要求。不要把包含真实聊天内容的数据库或截图上传到公开仓库。
+
+## 项目结构
 
 ```text
-~/.wechat-radar/config.json
+app/                 Next.js App Router 页面与 API
+components/          看板、侧边栏、图表、消息渲染组件
+lib/                 wx-cli 封装、SQLite、话题/链接聚合逻辑
+scripts/             本地维护脚本
+docs/assets/         README 图片与公开素材
 ```
 
-关键配置：
+## 常见问题
 
-| 配置 | 说明 |
-|---|---|
-| `WECHAT_RADAR_DATA_DIR` | 本地数据目录，默认 `~/.wechat-radar` |
-| `WECHAT_RADAR_MY_NAMES` | 用于识别 @我的多个昵称，逗号分隔 |
-| `WECHAT_RADAR_DEMO` | 设置为 `1` 时启用 demo 模式 |
-| `WECHAT_RADAR_CODEX_MODEL` | 可选，Codex CLI 话题/链接整理使用 |
+| 问题 | 解决方法 |
+| --- | --- |
+| `wx daemon 未运行` | 先运行 `wx daemon start`，再刷新页面。 |
+| `better-sqlite3` native 模块报错 | 运行 `pnpm rebuild better-sqlite3`。 |
+| 首页没有数据 | 先完成 `/setup`，确认 `wx sessions --json` 有输出，然后点击“重扫”。 |
+| 话题雷达为空 | 打开对应日期会自动构建；也可以点击“构建话题”。需要本机可运行 `codex`。 |
+| 不想读取真实微信 | 在 `/setup` 勾选 demo 模式，或设置 `WECHAT_RADAR_DEMO=1`。 |
 
-## wx-cli 接入
+## 致谢
 
-确认 `wx` 命令可用：
+- [jackwener/wx-cli](https://github.com/jackwener/wx-cli)：本项目依赖它读取本机微信数据。
+- [Next.js](https://nextjs.org/)、[ECharts](https://echarts.apache.org/)、[better-sqlite3](https://github.com/WiseLibs/better-sqlite3)。
+
+---
+
+<a name="english"></a>
+
+## English
+
+WeChat Radar is a local-first intelligence dashboard for WeChat groups. It turns noisy group chats into daily briefings, cross-group topics, link intelligence, mentions, and per-group reports.
+
+### Features
+
+- Daily dashboard for messages, links, tools, anomalies, and people
+- Codex CLI powered topic clustering by date
+- Link intelligence with generated titles and deduplication
+- Per-group daily reports with copy-friendly output
+- Local SQLite storage by default
+- Light and dark themes
+
+### Install
 
 ```bash
-wx --version
-wx daemon status
-wx sessions -n 10 --json
+git clone https://github.com/joeseesun/wechat-radar.git
+cd wechat-radar
+pnpm install
+pnpm rebuild better-sqlite3
+pnpm dev
 ```
 
-如果 daemon 没运行，请按你的 `wx-cli` 文档启动或修复。
+Open [http://localhost:3000](http://localhost:3000). The first run redirects to `/setup`, where you can configure your WeChat display names and privacy confirmation, or enable demo mode.
 
-## 数据存储
+### Requirements
 
-默认数据目录：
+- [ ] macOS with WeChat 4.x logged in
+- [ ] Node.js 20+
+- [ ] pnpm
+- [ ] wx-cli initialized and running
+- [ ] Optional: Codex CLI for better topic/link summaries
 
-```text
-~/.wechat-radar/
-├── radar.db
-└── config.json
-```
+### Privacy
 
-数据库包含：
+By default, runtime data is stored locally under `~/.wechat-radar/`. The app does not upload your chat database. You are responsible for using it in a way that respects WeChat rules, local laws, group privacy expectations, and organizational compliance.
 
-- `messages`：同步后的本地消息。
-- `daily_stats`：每日聚合统计。
-- `mentions`：@我的索引。
-- `groups` / `group_tags`：本地分组。
-- `topics` / `topic_messages`：话题雷达结果。
-- `link_intelligence_cache`：链接情报缓存。
+### Troubleshooting
 
-不要把 `radar.db`、`.env.local` 或日志提交到 Git。
+| Problem | Fix |
+| --- | --- |
+| wx daemon is not running | Run `wx daemon start`. |
+| better-sqlite3 fails to load | Run `pnpm rebuild better-sqlite3`. |
+| No dashboard data | Finish `/setup`, confirm `wx sessions --json` works, then click rescan. |
+| Topic radar is empty | Open the date or click build topics; make sure `codex` is available. |
 
-## 常用命令
+## License
 
-```bash
-pnpm dev          # 本地开发
-pnpm build        # 生产构建
-pnpm lint         # 代码检查
-pnpm demo:seed    # 写入示例数据
-```
-
-## 隐私说明
-
-微信雷达默认只读本机数据，并把处理结果写入本地 SQLite。项目本身不提供云端服务，也不会自动上传聊天记录。
-
-你需要自行确认读取、保存、处理聊天数据符合当地法律、平台规则和群成员预期。更多见 [PRIVACY.md](./PRIVACY.md)。
-
-## 开源协议
-
-MIT，见 [LICENSE](./LICENSE)。
+MIT

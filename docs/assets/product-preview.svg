@@ -1,0 +1,64 @@
+<svg width="1440" height="860" viewBox="0 0 1440 860" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1440" height="860" fill="#f5f1e8"/>
+  <rect x="24" y="24" width="1392" height="812" rx="28" fill="#fbfaf6" stroke="#dfd7c8"/>
+  <rect x="24" y="24" width="176" height="812" rx="28" fill="#f1eadf"/>
+  <text x="48" y="82" fill="#26735b" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="2">WECHAT RADAR</text>
+  <text x="48" y="112" fill="#24322d" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="800">微信群聊情报</text>
+  <text x="48" y="137" fill="#7d8078" font-family="Inter, Arial, sans-serif" font-size="13">本地优先 · 高信号聚合</text>
+  <rect x="40" y="190" width="144" height="36" rx="8" fill="#dfeade"/>
+  <text x="62" y="213" fill="#255947" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700">看板 Brief</text>
+  <text x="62" y="260" fill="#59655f" font-family="Inter, Arial, sans-serif" font-size="14">话题雷达</text>
+  <text x="62" y="304" fill="#59655f" font-family="Inter, Arial, sans-serif" font-size="14">链接情报</text>
+  <text x="48" y="374" fill="#9b9c95" font-family="Inter, Arial, sans-serif" font-size="11" font-weight="700" letter-spacing="1.6">COLLECTIONS</text>
+  <circle cx="52" cy="414" r="4" fill="#ef4444"/><text x="66" y="419" fill="#59655f" font-family="Inter, Arial, sans-serif" font-size="13">AI 产品群</text>
+  <circle cx="52" cy="446" r="4" fill="#10b981"/><text x="66" y="451" fill="#59655f" font-family="Inter, Arial, sans-serif" font-size="13">Coding 群</text>
+  <circle cx="52" cy="478" r="4" fill="#06b6d4"/><text x="66" y="483" fill="#59655f" font-family="Inter, Arial, sans-serif" font-size="13">工具分享</text>
+  <text x="236" y="82" fill="#26735b" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="800" letter-spacing="2">DAILY INTELLIGENCE</text>
+  <text x="236" y="116" fill="#22312b" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="850">驾驶舱 · 情报看板</text>
+  <text x="236" y="144" fill="#7a8079" font-family="Inter, Arial, sans-serif" font-size="14">今天的微信群，只看值得处理的信号。</text>
+  <rect x="870" y="72" width="230" height="40" rx="8" fill="#ffffff" stroke="#e3dacb"/>
+  <text x="900" y="98" fill="#4b554f" font-family="Inter, Arial, sans-serif" font-size="14">搜索群、话题、人、关键词</text>
+  <rect x="1118" y="72" width="132" height="40" rx="8" fill="#ffffff" stroke="#e3dacb"/>
+  <text x="1151" y="98" fill="#4b554f" font-family="Inter, Arial, sans-serif" font-size="14">2026/05/25</text>
+  <rect x="1266" y="72" width="98" height="40" rx="8" fill="#2fbf78"/>
+  <text x="1290" y="98" fill="#ffffff" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700">重扫</text>
+  <g>
+    <rect x="236" y="178" width="250" height="96" rx="12" fill="#ffffff" stroke="#e1dacd"/>
+    <text x="258" y="212" fill="#26735b" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700">活跃群</text>
+    <text x="258" y="252" fill="#23312b" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="850">153</text>
+    <rect x="506" y="178" width="250" height="96" rx="12" fill="#ffffff" stroke="#e1dacd"/>
+    <text x="528" y="212" fill="#26735b" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700">总消息</text>
+    <text x="528" y="252" fill="#23312b" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="850">178,580</text>
+    <rect x="776" y="178" width="250" height="96" rx="12" fill="#ffffff" stroke="#e1dacd"/>
+    <text x="798" y="212" fill="#a36c21" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700">@ 我的</text>
+    <text x="798" y="252" fill="#a36c21" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="850">117</text>
+    <rect x="1046" y="178" width="250" height="96" rx="12" fill="#ffffff" stroke="#e1dacd"/>
+    <text x="1068" y="212" fill="#66716b" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700">静默群</text>
+    <text x="1068" y="252" fill="#23312b" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="850">22</text>
+  </g>
+  <rect x="236" y="304" width="1060" height="104" rx="12" fill="#ffffff" stroke="#e1dacd"/>
+  <text x="260" y="338" fill="#26735b" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="800" letter-spacing="1">TODAY QUEUE</text>
+  <text x="260" y="366" fill="#22312b" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="800">今日先看这些</text>
+  <text x="260" y="390" fill="#6f756f" font-family="Inter, Arial, sans-serif" font-size="14">消息 · 文章 · 工具 · 异动，自动聚合成可点击清单。</text>
+  <rect x="236" y="438" width="510" height="330" rx="12" fill="#ffffff" stroke="#e1dacd"/>
+  <text x="260" y="474" fill="#22312b" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="800">关键话题与消息</text>
+  <g fill="#f5f1e8">
+    <rect x="260" y="502" width="462" height="46" rx="7"/>
+    <rect x="260" y="564" width="462" height="46" rx="7"/>
+    <rect x="260" y="626" width="462" height="46" rx="7"/>
+    <rect x="260" y="688" width="462" height="46" rx="7"/>
+  </g>
+  <text x="282" y="530" fill="#29352f" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700">企业 AI 原生重构</text>
+  <text x="282" y="592" fill="#29352f" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700">Codex 智能体工作流</text>
+  <text x="282" y="654" fill="#29352f" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700">华为特斯拉智驾争论</text>
+  <text x="282" y="716" fill="#29352f" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700">群知识库沉淀整理</text>
+  <rect x="770" y="438" width="526" height="330" rx="12" fill="#ffffff" stroke="#e1dacd"/>
+  <text x="794" y="474" fill="#22312b" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="800">链接情报</text>
+  <line x1="794" y1="512" x2="1264" y2="512" stroke="#eadfce"/>
+  <text x="794" y="548" fill="#26735b" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="800">文章 / 内容</text>
+  <text x="794" y="578" fill="#29352f" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700">Agent 落地为什么卡在组织流程</text>
+  <text x="794" y="604" fill="#7b8079" font-family="Inter, Arial, sans-serif" font-size="12">mp.weixin.qq.com · 4 群 · 9 次</text>
+  <text x="794" y="652" fill="#26735b" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="800">工具 / 资源</text>
+  <text x="794" y="682" fill="#29352f" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700">开源多 Agent 工作流项目</text>
+  <text x="794" y="708" fill="#7b8079" font-family="Inter, Arial, sans-serif" font-size="12">github.com · 3 群 · 6 次</text>
+</svg>

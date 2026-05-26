@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "db:backup": "node scripts/backup-cockpit-db.mjs",
     "start": "next start",
     "lint": "eslint",
     "demo:seed": "node scripts/seed_demo.cjs"

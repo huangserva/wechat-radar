@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
-import TopBar, { type RangeKey, type RefreshMode } from '@/components/TopBar';
+import TopBar, { type RangeKey } from '@/components/TopBar';
 import StatGrid, { type CardsData } from '@/components/StatGrid';
 import TrendChart, { type TrendPoint } from '@/components/TrendChart';
 import ActiveGroupsList, { type ActiveGroup } from '@/components/ActiveGroupsList';
@@ -24,12 +24,10 @@ type StatsResponse = {
 export default function Page() {
   const [range, setRange] = useState<RangeKey>('month');
   const [date, setDate] = useState(() => localToday());
-  const [mode, setMode] = useState<RefreshMode>('auto');
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [rescanning, setRescanning] = useState(false);
   const [rescanInfo, setRescanInfo] = useState<string | undefined>(undefined);
   const [setupChecked, setSetupChecked] = useState(false);
-
 
   useEffect(() => {
     let cancelled = false;
@@ -113,6 +111,12 @@ export default function Page() {
                 setRescanInfo(
                   `完成 · ${evt.messages ?? evt.inserted_messages ?? 0} 条消息已入库`,
                 );
+              } else if (evt.type === 'topics_start') {
+                setRescanInfo(`消息已入库 · 开始构建 ${evt.dates} 天话题`);
+              } else if (evt.type === 'topics_date') {
+                setRescanInfo(`构建话题 · ${evt.date}`);
+              } else if (typeof evt.type === 'string' && evt.type.startsWith('topics_')) {
+                setRescanInfo(`构建话题 · ${evt.date}${evt.message ? ` · ${evt.message}` : ''}`);
               }
             } catch {}
           }
@@ -128,7 +132,11 @@ export default function Page() {
   );
 
   if (!setupChecked) {
-    return <div className="flex h-screen items-center justify-center bg-[var(--bg)] text-[12px] text-[var(--text-3)]">加载配置…</div>;
+    return (
+      <div className="flex h-screen items-center justify-center bg-[var(--bg)] text-[12px] text-[var(--text-3)]">
+        加载配置…
+      </div>
+    );
   }
 
   return (
@@ -141,8 +149,6 @@ export default function Page() {
           date={date}
           onRangeChange={setRange}
           onDateChange={setDate}
-          mode={mode}
-          onModeChange={setMode}
           rescanning={rescanning}
           onRescan={() => runRescan(false)}
           onFullSync={() => runRescan(true)}
@@ -166,7 +172,7 @@ export default function Page() {
           </div>
 
           <div className="mt-4 grid grid-cols-1 gap-4 2xl:grid-cols-[1.4fr_1fr]">
-            <ActiveGroupsList groups={stats?.active_groups ?? []} />
+            <ActiveGroupsList groups={stats?.active_groups ?? []} date={stats?.window.until ?? date} />
             <CategoryChart categories={stats?.categories ?? []} />
           </div>
         </div>
