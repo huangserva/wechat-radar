@@ -1,11 +1,24 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 const Database = require('better-sqlite3');
-const { existsSync, mkdirSync, writeFileSync } = require('node:fs');
+const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');
 const { homedir } = require('node:os');
 const { dirname, join } = require('node:path');
 
 const dataDir = process.env.WECHAT_RADAR_DATA_DIR || join(homedir(), '.wechat-radar');
 const dbPath = join(dataDir, 'radar.db');
+const configPath = join(dataDir, 'config.json');
+if (existsSync(configPath) && process.env.WECHAT_RADAR_ALLOW_DEMO_OVERWRITE !== '1') {
+  try {
+    const current = JSON.parse(readFileSync(configPath, 'utf-8'));
+    if (current && current.setupCompleted && current.demoMode !== true) {
+      console.error(
+        `Refusing to seed demo data into a configured real workspace: ${dataDir}\n` +
+          'Set WECHAT_RADAR_DATA_DIR to a demo-only directory, or set WECHAT_RADAR_ALLOW_DEMO_OVERWRITE=1 if this is intentional.',
+      );
+      process.exit(1);
+    }
+  } catch {}
+}
 if (!existsSync(dirname(dbPath))) mkdirSync(dirname(dbPath), { recursive: true });
 const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
@@ -68,5 +81,5 @@ db.transaction(() => {
   }
 })();
 
-writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ myNicknames: ['你的微信名'], defaultRange: 'week', rescanConcurrency: 5, privacyConfirmed: true, setupCompleted: true, demoMode: true, defaultSyncDays: 7 }, null, 2));
+writeFileSync(configPath, JSON.stringify({ myNicknames: ['你的微信名'], defaultRange: 'week', rescanConcurrency: 5, privacyConfirmed: true, setupCompleted: true, demoMode: true, defaultSyncDays: 7 }, null, 2));
 console.log(`Seeded demo data at ${dbPath}`);

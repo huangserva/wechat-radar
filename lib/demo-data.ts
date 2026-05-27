@@ -1,5 +1,5 @@
 import { db } from './db';
-import { writeConfig } from './config';
+import { readConfig, writeConfig } from './config';
 
 const GROUPS = [
   { id: 'demo-ai@chatroom', name: 'AI 产品讨论群' },
@@ -28,6 +28,11 @@ function ymd(d: Date) {
 }
 
 export function seedDemoData() {
+  const existing = readConfig();
+  if (existing.setupCompleted && existing.demoMode !== true) {
+    console.warn('[seedDemoData] Refusing to overwrite real config — setupCompleted=true, demoMode=false');
+    return { groups: 0, days: 0, skipped: true };
+  }
   const database = db();
   const now = new Date();
   const insertMessage = database.prepare(`

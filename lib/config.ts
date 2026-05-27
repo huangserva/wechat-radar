@@ -111,9 +111,29 @@ export function readConfig(): Config {
   }
 }
 
+export const PLACEHOLDER_NICKNAMES = new Set(['你的微信名', '微信名', 'yourwechatname', 'yourname']);
+
+export function isPlaceholderNickname(name: string): boolean {
+  const normalized = name
+    .trim()
+    .replace(/[\s[\]【】()（）<>《》〈〉\u201c\u201d\u2018\u2019"']/g, '')
+    .toLowerCase();
+  return PLACEHOLDER_NICKNAMES.has(normalized);
+}
+
+export function stripPlaceholderNicknames(names: string[]): string[] {
+  return names.filter((n) => n.trim() && !isPlaceholderNickname(n));
+}
+
 export function writeConfig(patch: Partial<Config>): Config {
   const cur = readConfig();
-  const merged = { ...cur, ...patch };
+  let merged = { ...cur, ...patch };
+  if (merged.demoMode === false) {
+    const stripped = stripPlaceholderNicknames(merged.myNicknames);
+    if (stripped.length !== merged.myNicknames.length) {
+      merged = { ...merged, myNicknames: stripped };
+    }
+  }
   mkdirSync(dirname(CONFIG_PATH), { recursive: true });
   writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), 'utf-8');
   return merged;

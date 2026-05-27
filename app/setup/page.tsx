@@ -7,6 +7,7 @@ type SetupStatus = {
   ok: boolean;
   dataDir: string;
   configured: boolean;
+  suggestedNicknames?: string[];
   config: {
     myNicknames: string[];
     demoMode: boolean;
@@ -33,20 +34,29 @@ export default function SetupPage() {
   const [defaultSyncDays, setDefaultSyncDays] = useState(7);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [suggestedNicknames, setSuggestedNicknames] = useState<string[]>([]);
 
   useEffect(() => {
     (async () => {
       const res = await fetch('/api/setup', { cache: 'no-store' });
       const json = (await res.json()) as SetupStatus;
+      const existingNames = sanitizeNicknames(json.config.myNicknames);
+      const suggestions = sanitizeNicknames(json.suggestedNicknames ?? []);
       setStatus(json);
-      setNames(json.config.myNicknames.join(', '));
-      setDemoMode(json.config.demoMode);
+      setSuggestedNicknames(suggestions);
+      setNames(existingNames.length > 0 ? existingNames.join(', ') : suggestions.join(', '));
+      setDemoMode(false);
       setPrivacyConfirmed(json.config.privacyConfirmed);
       setDefaultSyncDays(json.config.defaultSyncDays ?? 7);
     })();
   }, []);
 
   async function submit() {
+    const cleanNames = sanitizeNicknames(names.split(','));
+    if (!demoMode && cleanNames.length === 0) {
+      setError('请填写真实微信显示名，不能使用“你的微信名”占位符');
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -54,7 +64,7 @@ export default function SetupPage() {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          myNicknames: names.split(',').map((name) => name.trim()).filter(Boolean),
+          myNicknames: cleanNames,
           demoMode,
           privacyConfirmed,
           defaultSyncDays,
@@ -98,7 +108,9 @@ export default function SetupPage() {
               placeholder="张三, San Zhang, zhangsan"
               className="control-surface mt-2 w-full rounded-md px-3 py-2 text-[13px] outline-none"
             />
-            <p className="mt-2 text-[11px] text-[var(--text-3)]">用于识别 @我的、自己相关讨论和提醒。</p>
+            <p className="mt-2 text-[11px] text-[var(--text-3)]">
+              用于识别 @我的、自己相关讨论和提醒。{suggestedNicknames.length > 0 ? '已从本地微信身份预填，可修改。' : '不要填写“你的微信名”占位符。'}
+            </p>
           </section>
 
           <section className="card p-5">
@@ -107,6 +119,9 @@ export default function SetupPage() {
               <input type="checkbox" checked={demoMode} onChange={(e) => setDemoMode(e.target.checked)} />
               使用示例数据体验
             </label>
+            <p className="mt-2 text-[11px] leading-5 text-[var(--text-3)]">
+              未勾选时使用真实解密 DB 数据，并写入 demoMode=false。
+            </p>
             <label className="mt-4 block text-[12px] text-[var(--text-3)]">首次同步天数</label>
             <select
               value={defaultSyncDays}
@@ -156,4 +171,24 @@ function CheckRow({ label, ok, detail }: { label: string; ok: boolean; detail: s
       </span>
     </div>
   );
+}
+
+function sanitizeNicknames(names: string[]): string[] {
+  const seen = new Set<string>();
+  const clean: string[] = [];
+  for (const raw of names) {
+    const name = raw.trim();
+    if (!name || isPlaceholderNickname(name) || seen.has(name)) continue;
+    seen.add(name);
+    clean.push(name);
+  }
+  return clean;
+}
+
+function isPlaceholderNickname(name: string): boolean {
+  const normalized = name
+    .trim()
+    .replace(/[\s[\]【】()（）<>《》"'“”‘’]/g, '')
+    .toLowerCase();
+  return ['你的微信名', '微信名', 'yourwechatname', 'yourname'].includes(normalized);
 }

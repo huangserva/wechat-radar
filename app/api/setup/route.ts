@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
+import Database from 'better-sqlite3';
+import { existsSync } from 'node:fs';
 import { z } from 'zod';
-import { DATA_DIR, configStatus, writeConfig } from '@/lib/config';
+import { DATA_DIR, configStatus, writeConfig, isPlaceholderNickname } from '@/lib/config';
 import { seedDemoData } from '@/lib/demo-data';
 import { wxAvailable, wxDaemonStatus } from '@/lib/wx';
-import { wxDbPaths } from '@/lib/wechat-db-adapter';
+import { wxDbAvailable, wxDbPaths } from '@/lib/wechat-db-adapter';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,11 +18,13 @@ const SetupSchema = z.object({
 
 export async function GET() {
   const [wxInstalled, daemon] = await Promise.all([wxAvailable(), wxDaemonStatus()]);
+  const status = configStatus();
   const paths = wxDbPaths();
   return NextResponse.json({
     ok: true,
-    ...configStatus(),
+    ...status,
     dataDir: DATA_DIR,
+    suggestedNicknames: suggestNicknames(status.config.wechatSelfWxid, paths.contactDb),
     checks: {
       wxInstalled,
       wxDaemonRunning: daemon.running,
@@ -37,17 +41,76 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: parsed.error.message }, { status: 400 });
   }
-  const names = parsed.data.myNicknames.map((name) => name.trim()).filter(Boolean);
-  if (!parsed.data.demoMode && names.length === 0) {
-    return NextResponse.json({ ok: false, error: '请至少填写一个自己的微信名或群昵称' }, { status: 400 });
+  if (!parsed.data.privacyConfirmed) {
+    return NextResponse.json({ ok: false, error: '请先确认隐私说明' }, { status: 400 });
   }
+  let demoMode = parsed.data.demoMode === true;
+  if (!demoMode) {
+    // Real setup: verify real data source exists
+    if (!wxDbAvailable()) {
+      return NextResponse.json(
+        { ok: false, error: '未检测到真实数据源（collector.db / decrypted DB），请先解密微信数据或勾选 demo 模式' },
+        { status: 400 },
+      );
+    }
+  }
+  if (demoMode && wxDbAvailable()) {
+    console.warn('[setup] Real data source detected but demoMode was requested — forcing demoMode=false');
+    demoMode = false;
+  }
+  const names = sanitizeNicknames(parsed.data.myNicknames);
+  if (!demoMode && names.length === 0) {
+    return NextResponse.json({ ok: false, error: '请填写真实微信显示名，不能使用"你的微信名"占位符' }, { status: 400 });
+  }
+  const demo = demoMode ? seedDemoData() : null;
   const config = writeConfig({
-    myNicknames: names,
+    myNicknames: demoMode ? (names.length > 0 ? names : ['你的微信名']) : names,
     privacyConfirmed: parsed.data.privacyConfirmed,
-    demoMode: parsed.data.demoMode,
+    demoMode,
     defaultSyncDays: parsed.data.defaultSyncDays,
+    wechatDataSource: 'db',
     setupCompleted: true,
   });
-  const demo = parsed.data.demoMode ? seedDemoData() : null;
   return NextResponse.json({ ok: true, configured: true, config, demo });
+}
+
+function sanitizeNicknames(names: string[]): string[] {
+  const seen = new Set<string>();
+  const clean: string[] = [];
+  for (const raw of names) {
+    const name = raw.trim();
+    if (!name || isPlaceholderNickname(name) || seen.has(name)) continue;
+    seen.add(name);
+    clean.push(name);
+  }
+  return clean;
+}
+
+function suggestNicknames(selfWxid: string, contactDb: string): string[] {
+  const candidates: string[] = [];
+  if (existsSync(contactDb)) {
+    let d: Database.Database | null = null;
+    try {
+      d = new Database(contactDb, { readonly: true, fileMustExist: true });
+      const hasContact = d
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'contact'")
+        .get();
+      if (hasContact) {
+        const findByUsername = d.prepare('SELECT username, nick_name, remark, alias FROM contact WHERE username = ?');
+        for (const username of [selfWxid, '__self__']) {
+          if (!username) continue;
+          const row = findByUsername.get(username) as { username?: string; nick_name?: string | null; remark?: string | null; alias?: string | null } | undefined;
+          if (row) {
+            candidates.push(row.remark ?? '', row.nick_name ?? '', row.alias ?? '');
+          }
+        }
+      }
+    } catch {
+      // Best-effort setup hint only; POST validation remains authoritative.
+    } finally {
+      d?.close();
+    }
+  }
+  if (selfWxid) candidates.push(selfWxid);
+  return sanitizeNicknames(candidates).slice(0, 3);
 }
