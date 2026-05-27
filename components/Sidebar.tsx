@@ -16,6 +16,9 @@ import {
   Flame,
   Users,
   CalendarClock,
+  UserCircle,
+  Lightbulb,
+  Activity,
 } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
 
@@ -37,6 +40,8 @@ type DaemonStatus = {
   ok: boolean;
   running: boolean;
   pid?: number;
+  source?: 'db' | 'wx';
+  db_readable?: boolean;
 };
 
 export default function Sidebar() {
@@ -48,24 +53,32 @@ export default function Sidebar() {
 
   useEffect(() => {
     const load = async () => {
-      try {
-        const r = await fetch('/api/sessions');
-        const j = await r.json();
-        setData(j);
-      } catch {}
-      try {
-        const r = await fetch('/api/stats?range=week');
-        const j = await r.json();
-        if (j.ok && j.sidebar_counts) {
-          setUnsorted(j.sidebar_counts.unsorted);
-          setFavorites(j.sidebar_counts.favorites);
-        }
-      } catch {}
-      try {
-        const r = await fetch('/api/daemon');
-        const j = await r.json();
-        setDaemon(j);
-      } catch {}
+      await Promise.all([
+        (async () => {
+          try {
+            const r = await fetch('/api/sessions');
+            const j = await r.json();
+            setData(j);
+          } catch {}
+        })(),
+        (async () => {
+          try {
+            const r = await fetch('/api/stats?range=week');
+            const j = await r.json();
+            if (j.ok && j.sidebar_counts) {
+              setUnsorted(j.sidebar_counts.unsorted);
+              setFavorites(j.sidebar_counts.favorites);
+            }
+          } catch {}
+        })(),
+        (async () => {
+          try {
+            const r = await fetch('/api/daemon');
+            const j = await r.json();
+            setDaemon(j);
+          } catch {}
+        })(),
+      ]);
     };
     load();
     const id = setInterval(load, 30_000);
@@ -131,11 +144,25 @@ export default function Sidebar() {
           active={pathname === '/people'}
         />
         <NavItem
+          href="/profile"
+          icon={<UserCircle size={15} />}
+          label="我的画像"
+          badge="Self"
+          active={pathname === '/profile'}
+        />
+        <NavItem
           href="/knowledge"
           icon={<BookOpen size={15} />}
           label="知识库"
           badge="KB"
           active={pathname === '/knowledge'}
+        />
+        <NavItem
+          href="/insights"
+          icon={<Lightbulb size={15} />}
+          label="洞察"
+          badge="Insight"
+          active={pathname === '/insights'}
         />
         <NavItem
           href="/reviews"
@@ -150,6 +177,13 @@ export default function Sidebar() {
           label="对话实验室"
           badge="AI"
           active={pathname === '/lab'}
+        />
+        <NavItem
+          href="/steward"
+          icon={<Activity size={15} />}
+          label="管家状态"
+          badge="Health"
+          active={pathname === '/steward'}
         />
       </nav>
 
@@ -177,7 +211,12 @@ export default function Sidebar() {
       </div>
 
       <div className="border-t border-[var(--border-soft)] px-4 py-2 text-[11px] text-[var(--text-3)]">
-        {daemon?.running ? (
+        {daemon == null ? (
+          <span>
+            <span className="inline-block size-2 rounded-full bg-[var(--text-3)] mr-1.5 align-middle" />
+            检测数据源…
+          </span>
+        ) : daemon.running || daemon.db_readable ? (
           <span>
             <span className="inline-block size-2 rounded-full bg-[var(--accent)] mr-1.5 align-middle" />
             解密 DB 可读 / 数据源在线

@@ -79,6 +79,9 @@ export default function GlobalSearch() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => query.trim().length >= 2 && setOpen(true)}
+          autoComplete="off"
+          spellCheck={false}
+          suppressHydrationWarning
           className="min-w-0 flex-1 bg-transparent text-[12px] outline-none placeholder:text-[var(--text-3)]"
           placeholder="搜索群、话题、人、关键词"
         />
