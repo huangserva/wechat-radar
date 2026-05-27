@@ -1,3 +1,4 @@
+import pLimit from 'p-limit';
 import { db } from './db';
 import { wxSessions } from './wx';
 
@@ -6,8 +7,17 @@ const MIN_MESSAGE_LENGTH = 20;
 const MAX_MESSAGE_LENGTH = 400;
 const MAX_MESSAGES_TO_PROCESS = 3000;
 const MAX_TOPICS_TO_SAVE = 30;
-const CODEX_CHUNK_SIZE = Number(process.env.WECHAT_RADAR_TOPIC_CHUNK_SIZE ?? 250);
+// 120 (not 250): MiMo emits every member message id into each topic's `ids`
+// array, so larger chunks produce verbose output that overruns max_tokens and
+// truncates the JSON (finish_reason=length) → the chunk is dropped. Smaller
+// chunks keep each response well under the cap and run faster per call.
+const CODEX_CHUNK_SIZE = Number(process.env.WECHAT_RADAR_TOPIC_CHUNK_SIZE ?? 120);
 const TOPICS_PER_CHUNK = 12;
+// Per-chunk extraction calls run concurrently (capped) — the LLM is the bottleneck
+// and chunks are independent. Capped to avoid rate-limit storms on the provider.
+const TOPIC_CONCURRENCY = Math.max(1, Number(process.env.WECHAT_RADAR_TOPIC_CONCURRENCY ?? 4));
+// Retries for transient LLM failures (429 bursts under shared load, 5xx, timeouts).
+const TOPIC_MAX_RETRIES = Math.max(0, Number(process.env.WECHAT_RADAR_TOPIC_RETRIES ?? 3));
 
 // Topic aggregation LLM = openai-compatible (GLM). Defaults to the same env as
 // /lab (WECHAT_RADAR_LAB_*); WECHAT_RADAR_TOPIC_* overrides. Switched off the
@@ -15,7 +25,7 @@ const TOPICS_PER_CHUNK = 12;
 const TOPIC_BASE_URL = process.env.WECHAT_RADAR_TOPIC_BASE_URL ?? process.env.WECHAT_RADAR_LAB_BASE_URL;
 const TOPIC_API_KEY = process.env.WECHAT_RADAR_TOPIC_API_KEY ?? process.env.WECHAT_RADAR_LAB_API_KEY;
 const TOPIC_MODEL = process.env.WECHAT_RADAR_TOPIC_MODEL ?? process.env.WECHAT_RADAR_LAB_MODEL ?? 'glm-4-flash';
-const TOPIC_MAX_TOKENS = Number(process.env.WECHAT_RADAR_TOPIC_MAX_TOKENS ?? 3000);
+const TOPIC_MAX_TOKENS = Number(process.env.WECHAT_RADAR_TOPIC_MAX_TOKENS ?? 6000);
 const TOPIC_TIMEOUT_MS = Number(
   process.env.WECHAT_RADAR_TOPIC_TIMEOUT_MS ?? process.env.WECHAT_RADAR_LAB_CODEX_TIMEOUT_MS ?? 180_000,
 );
@@ -169,59 +179,83 @@ async function runTopicLlm<T>(prompt: string, timeoutMs = TOPIC_TIMEOUT_MS): Pro
   if (!TOPIC_BASE_URL) {
     throw new Error('WECHAT_RADAR_TOPIC_BASE_URL / WECHAT_RADAR_LAB_BASE_URL required for topic LLM');
   }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const headers: Record<string, string> = { 'content-type': 'application/json' };
-    if (TOPIC_API_KEY) headers.authorization = `Bearer ${TOPIC_API_KEY}`;
-
-    const response = await fetch(`${TOPIC_BASE_URL.replace(/\/+$/, '')}/chat/completions`, {
-      method: 'POST',
-      signal: controller.signal,
-      headers,
-      body: JSON.stringify({
-        model: TOPIC_MODEL,
-        messages: [
-          {
-            role: 'system',
-            content:
-              '你是微信群聊「话题雷达」聚合引擎。只输出符合用户要求的严格 JSON（根对象含 topics 数组），不要输出 markdown、解释或 answer/result 等包裹字段。',
-          },
-          { role: 'user', content: prompt },
-        ],
-        temperature: 0.2,
-        max_tokens: TOPIC_MAX_TOKENS,
-        response_format: { type: 'json_object' },
-      }),
-    });
-
-    const text = await response.text();
-    let payload: OpenAIChatResponse | null = null;
+  // Transient failures (429 rate-limit bursts when multiple workers share the
+  // provider, 5xx, socket resets, timeouts) are retried with exponential backoff
+  // so a chunk is dropped only when the LLM truly can't serve it — not because of
+  // momentary contention. Deterministic errors (400/parse) fail fast (no retry).
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= TOPIC_MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      const backoff = Math.min(15_000, 1_500 * 2 ** (attempt - 1)) + Math.random() * 800;
+      await new Promise((r) => setTimeout(r, backoff));
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      payload = text ? (JSON.parse(text) as OpenAIChatResponse) : null;
-    } catch {
-      payload = null;
+      const headers: Record<string, string> = { 'content-type': 'application/json' };
+      if (TOPIC_API_KEY) headers.authorization = `Bearer ${TOPIC_API_KEY}`;
+
+      const response = await fetch(`${TOPIC_BASE_URL.replace(/\/+$/, '')}/chat/completions`, {
+        method: 'POST',
+        signal: controller.signal,
+        headers,
+        body: JSON.stringify({
+          model: TOPIC_MODEL,
+          messages: [
+            {
+              role: 'system',
+              content:
+                '你是微信群聊「话题雷达」聚合引擎。只输出符合用户要求的严格 JSON（根对象含 topics 数组），不要输出 markdown、解释或 answer/result 等包裹字段。',
+            },
+            { role: 'user', content: prompt },
+          ],
+          temperature: 0.2,
+          max_tokens: TOPIC_MAX_TOKENS,
+          response_format: { type: 'json_object' },
+        }),
+      });
+
+      const text = await response.text();
+      let payload: OpenAIChatResponse | null = null;
+      try {
+        payload = text ? (JSON.parse(text) as OpenAIChatResponse) : null;
+      } catch {
+        payload = null;
+      }
+      if (!response.ok) {
+        const err = new Error(`topic LLM request failed (${response.status}): ${payload?.error?.message || text.slice(0, 400)}`);
+        // 429 / 408 / 5xx are transient → retry; 4xx (e.g. content filter) are not.
+        if ((response.status === 429 || response.status === 408 || response.status >= 500) && attempt < TOPIC_MAX_RETRIES) {
+          lastErr = err;
+          continue;
+        }
+        throw err;
+      }
+      const content = payload?.choices?.[0]?.message?.content;
+      if (typeof content !== 'string' || !content.trim()) {
+        throw new Error('topic LLM response missing choices[0].message.content');
+      }
+      const parsed = parseJsonOutput<unknown>(content);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && 'answer' in parsed) {
+        const answer = (parsed as { answer: unknown }).answer;
+        if (typeof answer === 'string') return parseJsonOutput<T>(answer);
+        if (answer && typeof answer === 'object') return answer as T;
+      }
+      return parsed as T;
+    } catch (e) {
+      const transient = e instanceof Error && (e.name === 'AbortError' || e.name === 'TypeError');
+      if (transient && attempt < TOPIC_MAX_RETRIES) {
+        lastErr = e;
+        continue;
+      }
+      if (e instanceof Error && e.name === 'AbortError') throw new Error('topic LLM timeout');
+      throw e;
+    } finally {
+      clearTimeout(timer);
     }
-    if (!response.ok) {
-      throw new Error(`topic LLM request failed (${response.status}): ${payload?.error?.message || text.slice(0, 400)}`);
-    }
-    const content = payload?.choices?.[0]?.message?.content;
-    if (typeof content !== 'string' || !content.trim()) {
-      throw new Error('topic LLM response missing choices[0].message.content');
-    }
-    const parsed = parseJsonOutput<unknown>(content);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && 'answer' in parsed) {
-      const answer = (parsed as { answer: unknown }).answer;
-      if (typeof answer === 'string') return parseJsonOutput<T>(answer);
-      if (answer && typeof answer === 'object') return answer as T;
-    }
-    return parsed as T;
-  } catch (e) {
-    if (e instanceof Error && e.name === 'AbortError') throw new Error('topic LLM timeout');
-    throw e;
-  } finally {
-    clearTimeout(timer);
   }
+  if (lastErr instanceof Error && lastErr.name === 'AbortError') throw new Error('topic LLM timeout');
+  throw lastErr instanceof Error ? lastErr : new Error('topic LLM failed after retries');
 }
 
 function formatMessagesForPrompt(messages: SourceMsg[], groupNameMap: Map<string, string>): string {
@@ -353,23 +387,29 @@ async function aggregateWithCodex(
   // 400 on real chat content) must NOT abort the whole day — skip it and keep the
   // topics from the chunks that did pass.
   let skipped = 0;
-  for (let i = 0; i < chunks.length; i++) {
-    try {
-      const response = await runTopicLlm<LlmTopicResponse>(
-        buildExtractionPrompt(date, chunks[i], groupNameMap, TOPICS_PER_CHUNK),
-      );
-      drafts.push(...(response.topics ?? []));
-      onProgress?.({ type: 'llm', done: i + 1, total: chunks.length, message: `LLM 分批聚合 ${i + 1}/${chunks.length}` });
-    } catch (e) {
-      skipped += 1;
-      onProgress?.({
-        type: 'llm',
-        done: i + 1,
-        total: chunks.length,
-        message: `第 ${i + 1}/${chunks.length} 块跳过（${e instanceof Error ? e.message.slice(0, 80) : 'LLM 错误'}）`,
-      });
-    }
-  }
+  let completed = 0;
+  const limit = pLimit(TOPIC_CONCURRENCY);
+  await Promise.all(
+    chunks.map((c, i) =>
+      limit(async () => {
+        try {
+          const response = await runTopicLlm<LlmTopicResponse>(
+            buildExtractionPrompt(date, c, groupNameMap, TOPICS_PER_CHUNK),
+          );
+          drafts.push(...(response.topics ?? []));
+          onProgress?.({ type: 'llm', done: ++completed, total: chunks.length, message: `LLM 分批聚合 ${completed}/${chunks.length}` });
+        } catch (e) {
+          skipped += 1;
+          onProgress?.({
+            type: 'llm',
+            done: ++completed,
+            total: chunks.length,
+            message: `第 ${i + 1}/${chunks.length} 块跳过（${e instanceof Error ? e.message.slice(0, 80) : 'LLM 错误'}）`,
+          });
+        }
+      }),
+    ),
+  );
   if (skipped > 0) {
     onProgress?.({
       type: 'llm',
