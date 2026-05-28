@@ -8,6 +8,7 @@ import TrendChart, { type TrendPoint } from '@/components/TrendChart';
 import ActiveGroupsList, { type ActiveGroup } from '@/components/ActiveGroupsList';
 import CategoryChart, { type CategoryStat } from '@/components/CategoryChart';
 import IntelligenceBrief, { type DashboardIntelligence } from '@/components/IntelligenceBrief';
+import { AlertTriangle, BellDot } from 'lucide-react';
 
 type StatsResponse = {
   ok: boolean;
@@ -21,6 +22,20 @@ type StatsResponse = {
   intelligence: DashboardIntelligence;
 };
 
+type StewardTodoState = {
+  available: boolean;
+  updated_at: string | null;
+  active_todos: number;
+  urgent_unresolved: number;
+  unacked_todos: number;
+  urgent_items: Array<{
+    id: string;
+    contact: string;
+    title: string;
+    created_date: string | null;
+  }>;
+};
+
 export default function Page() {
   const [range, setRange] = useState<RangeKey>('month');
   const [date, setDate] = useState(() => localToday());
@@ -28,6 +43,7 @@ export default function Page() {
   const [rescanning, setRescanning] = useState(false);
   const [rescanInfo, setRescanInfo] = useState<string | undefined>(undefined);
   const [setupChecked, setSetupChecked] = useState(false);
+  const [stewardState, setStewardState] = useState<StewardTodoState | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,6 +86,25 @@ export default function Page() {
       cancelled = true;
     };
   }, [range, date, setupChecked]);
+
+  useEffect(() => {
+    if (!setupChecked) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch('/api/assistant-state', { cache: 'no-store' });
+        const j = await r.json();
+        if (!cancelled && r.ok && j.ok) {
+          setStewardState(j.state);
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [setupChecked]);
 
   const runRescan = useCallback(
     async (full: boolean) => {
@@ -156,6 +191,8 @@ export default function Page() {
         />
 
         <div className="flex-1 overflow-y-auto px-6 py-5">
+          <StewardTodoCard state={stewardState} />
+
           <StatGrid cards={stats?.cards} days={stats?.window.days ?? 7} />
 
           <div className="mt-4">
@@ -179,6 +216,59 @@ export default function Page() {
       </main>
     </div>
   );
+}
+
+function StewardTodoCard({ state }: { state: StewardTodoState | null }) {
+  if (!state?.available) return null;
+  if (state.active_todos <= 0 && state.urgent_unresolved <= 0 && state.unacked_todos <= 0) return null;
+
+  return (
+    <section className="mb-4 overflow-hidden rounded-md border border-[rgba(223,107,107,0.36)] bg-[linear-gradient(135deg,rgba(223,107,107,0.16),rgba(213,162,83,0.08),rgba(255,255,255,0.02))]">
+      <div className="grid gap-4 px-5 py-4 lg:grid-cols-[260px_1fr]">
+        <div>
+          <div className="flex items-center gap-2 text-[12px] font-semibold text-[var(--danger)]">
+            <AlertTriangle size={15} />
+            管家待办
+          </div>
+          <div className="mt-2 text-[34px] font-semibold leading-none tracking-normal text-[var(--danger)]">
+            {state.urgent_unresolved}
+            <span className="ml-2 align-middle text-[15px] font-medium text-[var(--text)]">件紧急未处理</span>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+            <span className="rounded bg-[var(--surface)] px-2 py-1 text-[var(--text-2)]">Active {state.active_todos}</span>
+            <span className="rounded bg-[var(--warn-soft)] px-2 py-1 text-[var(--warn)]">未确认 {state.unacked_todos}</span>
+            {state.updated_at ? (
+              <span className="rounded bg-[var(--surface)] px-2 py-1 text-[var(--text-3)]">
+                {formatStateTime(state.updated_at)}
+              </span>
+            ) : null}
+          </div>
+        </div>
+
+        {state.urgent_items.length > 0 ? (
+          <div className="grid gap-2">
+            {state.urgent_items.slice(0, 5).map((item) => (
+              <div key={item.id} className="flex min-w-0 items-center gap-2 rounded-md border border-[rgba(223,107,107,0.22)] bg-[rgba(0,0,0,0.08)] px-3 py-2 text-[12px]">
+                <BellDot size={13} className="shrink-0 text-[var(--danger)]" />
+                <div className="min-w-0 flex-1 truncate font-medium">{item.title}</div>
+                {item.contact ? <div className="shrink-0 text-[10px] text-[var(--text-3)]">{item.contact}</div> : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function formatStateTime(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return value;
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  return `${m}-${d} ${hh}:${mm}`;
 }
 
 function localToday(): string {

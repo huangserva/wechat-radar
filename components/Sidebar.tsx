@@ -19,6 +19,8 @@ import {
   UserCircle,
   Lightbulb,
   Activity,
+  EyeOff,
+  BellRing,
 } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
 
@@ -144,6 +146,13 @@ export default function Sidebar() {
           active={pathname === '/people'}
         />
         <NavItem
+          href="/silence"
+          icon={<EyeOff size={15} />}
+          label="沉默成员"
+          badge="Quiet"
+          active={pathname === '/silence'}
+        />
+        <NavItem
           href="/profile"
           icon={<UserCircle size={15} />}
           label="我的画像"
@@ -184,6 +193,13 @@ export default function Sidebar() {
           label="管家状态"
           badge="Health"
           active={pathname === '/steward'}
+        />
+        <NavItem
+          href="/feedback"
+          icon={<BellRing size={15} />}
+          label="推送反馈"
+          badge="Push"
+          active={pathname === '/feedback'}
         />
       </nav>
 
