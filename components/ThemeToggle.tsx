@@ -7,22 +7,28 @@ type Theme = 'light' | 'dark';
 const STORAGE_KEY = 'wechat-radar-theme-v1';
 
 export default function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>(() => {
-    if (typeof window === 'undefined') return 'light';
-    return localStorage.getItem(STORAGE_KEY) === 'dark' ? 'dark' : 'light';
-  });
+  const [mounted, setMounted] = useState(false);
+  const [theme, setTheme] = useState<Theme>('light');
 
   useEffect(() => {
+    const storedTheme = localStorage.getItem(STORAGE_KEY) === 'dark' ? 'dark' : 'light';
+    setTheme(storedTheme);
+    setMounted(true);
+    applyTheme(storedTheme);
+  }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
     applyTheme(theme);
-  }, [theme]);
+  }, [mounted, theme]);
 
   const toggle = () => {
     const next = theme === 'dark' ? 'light' : 'dark';
     setTheme(next);
   };
 
-  const title = theme === 'dark' ? '切换到浅色主题' : '切换到深色主题';
-  const Icon = theme === 'dark' ? Sun : Moon;
+  const title = mounted ? (theme === 'dark' ? '切换到浅色主题' : '切换到深色主题') : '切换主题';
+  const Icon = mounted && theme === 'dark' ? Sun : Moon;
 
   return (
     <button
