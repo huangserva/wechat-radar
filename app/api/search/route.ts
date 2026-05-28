@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { wxSearchMessagesWithMeta, wxSessions } from '@/lib/wx';
+import { wxSessions } from '@/lib/wx';
 import type { WxSource, WxEmptyReason } from '@/lib/wx-types';
 
 export const dynamic = 'force-dynamic';
@@ -45,6 +45,10 @@ type PersonRow = {
   latest: string;
 };
 
+let groupNameCache: { names: Map<string, string>; expiresAt: number } | null = null;
+let groupNameRefresh: Promise<void> | null = null;
+const GROUP_NAME_CACHE_MS = 60_000;
+
 export async function GET(req: NextRequest) {
   const q = (new URL(req.url).searchParams.get('q') ?? '').trim();
   if (q.length < 2) return NextResponse.json({ ok: true, results: [] });
@@ -86,14 +90,15 @@ export async function GET(req: NextRequest) {
 
   const people = db()
     .prepare(
-      `SELECT sender, COUNT(*) AS hits, COUNT(DISTINCT chatroom_id) AS groups, MAX(date) AS latest
-       FROM messages
-       WHERE sender LIKE ?
-       GROUP BY sender
+      `SELECT m.sender, COUNT(*) AS hits, COUNT(DISTINCT m.chatroom_id) AS groups, MAX(m.date) AS latest
+       FROM messages_fts f
+       JOIN messages m ON m.rowid = f.rowid
+       WHERE messages_fts MATCH ?
+       GROUP BY m.sender
        ORDER BY hits DESC
        LIMIT 8`,
     )
-    .all(like) as PersonRow[];
+    .all(buildFtsQuery(q, 'sender')) as PersonRow[];
   for (const p of people) {
     results.push({
       id: `person:${p.sender}`,
@@ -106,13 +111,14 @@ export async function GET(req: NextRequest) {
 
   const messages = db()
     .prepare(
-      `SELECT chatroom_id, sender, content, date, time
-       FROM messages
-       WHERE content LIKE ? OR sender LIKE ?
-       ORDER BY timestamp DESC
+      `SELECT m.chatroom_id, m.sender, m.content, m.date, m.time
+       FROM messages_fts f
+       JOIN messages m ON m.rowid = f.rowid
+       WHERE messages_fts MATCH ?
+       ORDER BY m.timestamp DESC
        LIMIT 10`,
     )
-    .all(like, like) as MessageRow[];
+    .all(buildFtsQuery(q)) as MessageRow[];
   for (const m of messages) {
     results.push({
       id: `message:${m.chatroom_id}:${m.time}:${m.sender}`,
@@ -125,50 +131,28 @@ export async function GET(req: NextRequest) {
 
   let messageSource: WxSource = messages.length > 0 ? 'local' : 'none';
   let messageEmptyReason: WxEmptyReason = messages.length > 0 ? null : 'no_match';
-  if (messages.length < 10) {
-    const seen = new Set(results.map((r) => r.id));
-    const live = await wxSearchMessagesWithMeta(q, 10 - messages.length).catch(
-      () => ({ data: [], source: 'none' as WxSource, empty_reason: 'no_match' as WxEmptyReason }),
-    );
-    const liveMessages = live.data;
-    // Only override source when the local radar.db produced nothing itself.
-    if (messages.length === 0) {
-      messageSource = live.source;
-      messageEmptyReason = live.empty_reason;
-    }
-    for (const m of liveMessages) {
-      const id = `message:${m.username}:${m.time}:${m.sender}`;
-      if (seen.has(id)) continue;
-      results.push({
-        id,
-        type: 'message',
-        title: compact(m.content || m.sender, 80),
-        subtitle: `${m.chat ?? nameMap.get(m.username) ?? m.username} · ${m.sender} · ${m.time}`,
-        href: `/groups/${encodeURIComponent(m.username)}?date=${m.date}`,
-      });
-      seen.add(id);
-    }
-  }
 
-  const links = db()
-    .prepare(
-      `SELECT canonical_url, title, domain, MAX(date) AS date
-       FROM message_links
-       WHERE canonical_url LIKE ? OR COALESCE(title, '') LIKE ? OR domain LIKE ?
-       GROUP BY canonical_url
-       ORDER BY MAX(timestamp) DESC
-       LIMIT 8`,
-    )
-    .all(like, like, like) as LinkRow[];
-  for (const l of links) {
-    results.push({
-      id: `link:${l.canonical_url}`,
-      type: 'link',
-      title: l.title || l.canonical_url,
-      subtitle: `${l.domain} · ${l.date}`,
-      href: l.canonical_url,
-      external: true,
-    });
+  if (messages.length === 0) {
+    const links = db()
+      .prepare(
+        `SELECT canonical_url, title, domain, MAX(date) AS date
+         FROM message_links
+         WHERE canonical_url LIKE ? OR COALESCE(title, '') LIKE ? OR domain LIKE ?
+         GROUP BY canonical_url
+         ORDER BY MAX(timestamp) DESC
+         LIMIT 8`,
+      )
+      .all(like, like, like) as LinkRow[];
+    for (const l of links) {
+      results.push({
+        id: `link:${l.canonical_url}`,
+        type: 'link',
+        title: l.title || l.canonical_url,
+        subtitle: `${l.domain} · ${l.date}`,
+        href: l.canonical_url,
+        external: true,
+      });
+    }
   }
 
   return NextResponse.json({
@@ -180,31 +164,89 @@ export async function GET(req: NextRequest) {
 }
 
 async function loadGroupNames(): Promise<Map<string, string>> {
-  const names = new Map<string, string>();
-  try {
-    const sessions = await wxSessions(500);
-    for (const s of sessions) {
-      if (s.is_group) names.set(s.username, s.chat);
-    }
-  } catch {}
+  const now = Date.now();
+  if (groupNameCache && groupNameCache.expiresAt > now) {
+    return new Map(groupNameCache.names);
+  }
 
+  const names = loadLocalGroupIds();
+  if (!groupNameRefresh) {
+    groupNameRefresh = refreshGroupNameCache()
+      .catch(() => {})
+      .finally(() => {
+        groupNameRefresh = null;
+      });
+  }
+  return names;
+}
+
+function loadLocalGroupIds(): Map<string, string> {
+  const names = new Map<string, string>();
   const local = db()
     .prepare(
-      `SELECT chatroom_id, COUNT(*) AS n
-       FROM messages
-       GROUP BY chatroom_id
-       ORDER BY n DESC
+      `SELECT chatroom_id
+       FROM sync_state
+       WHERE total_messages > 0
+       ORDER BY total_messages DESC
        LIMIT 500`,
     )
     .all() as Array<{ chatroom_id: string }>;
   for (const row of local) {
-    if (!names.has(row.chatroom_id)) names.set(row.chatroom_id, row.chatroom_id);
+    names.set(row.chatroom_id, row.chatroom_id);
+  }
+  if (names.size === 0) {
+    const fallback = db()
+      .prepare(
+        `SELECT DISTINCT chatroom_id
+         FROM messages
+         LIMIT 500`,
+      )
+      .all() as Array<{ chatroom_id: string }>;
+    for (const row of fallback) {
+      names.set(row.chatroom_id, row.chatroom_id);
+    }
   }
   return names;
+}
+
+async function refreshGroupNameCache() {
+  const names = loadLocalGroupIds();
+  const sessions = await wxSessions(500);
+  for (const s of sessions) {
+    if (s.is_group) names.set(s.username, s.chat);
+  }
+  groupNameCache = {
+    names,
+    expiresAt: Date.now() + GROUP_NAME_CACHE_MS,
+  };
 }
 
 function compact(s: string, max: number): string {
   const text = s.replace(/\s+/g, ' ').trim();
   if (text.length <= max) return text;
   return `${text.slice(0, max - 1)}…`;
+}
+
+function buildFtsQuery(q: string, column?: 'sender'): string {
+  const terms = q
+    .normalize('NFKC')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .split(/\s+/)
+    .map((term) => term.trim())
+    .filter(Boolean)
+    .slice(0, 8);
+  const unique = new Set<string>();
+  const addTerm = (term: string) => {
+    const phrase = `"${term.replace(/"/g, '""')}"`;
+    unique.add(phrase);
+    unique.add(`${phrase}*`);
+  };
+
+  if (terms.length === 0) addTerm(q);
+  for (const term of terms) addTerm(term);
+  const full = terms.join(' ');
+  if (full && terms.length > 1) addTerm(full);
+
+  const query = Array.from(unique).join(' OR ');
+  return column ? `${column} : (${query})` : query;
 }
