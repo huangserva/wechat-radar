@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readConfig } from './config';
 
@@ -35,6 +35,16 @@ export interface DigestEventItem extends HeatRankItem {
   links: string[];
 }
 
+export interface TopicThreadItem {
+  id: number;
+  title: string;
+  description: string;
+  days: number;
+  groups: string[];
+  keywords: string[];
+  timeline: string[];
+}
+
 export interface InsightsPayload {
   available: boolean;
   assistant_db_path: string;
@@ -68,6 +78,12 @@ export interface InsightsPayload {
       visible_count: number;
       items: DigestEventItem[];
     };
+  };
+  topic_threads: {
+    available: boolean;
+    source_path: string;
+    total: number;
+    items: TopicThreadItem[];
   };
 }
 
@@ -124,7 +140,9 @@ const NON_ARTICLE_LINK_URL_DENYLIST_RE = [
 ];
 
 export function loadInsights(): InsightsPayload {
-  const assistantDbPath = join(readConfig().wechatAssistantDir, 'assistant.db');
+  const assistantDir = readConfig().wechatAssistantDir;
+  const assistantDbPath = join(assistantDir, 'assistant.db');
+  const topicThreads = loadTopicThreads(join(assistantDir, 'topic_threads.json'));
   return withDb(
     assistantDbPath,
     (d) => {
@@ -155,9 +173,10 @@ export function loadInsights(): InsightsPayload {
           links,
           events: digestData.ranking,
         },
+        topic_threads: topicThreads,
       };
     },
-    emptyPayload(assistantDbPath),
+    { ...emptyPayload(assistantDbPath), topic_threads: topicThreads },
   );
 }
 
@@ -182,6 +201,50 @@ function emptyPayload(assistantDbPath: string): InsightsPayload {
       links: { max_value: 0, total_count: 0, visible_count: 8, items: [] },
       events: { max_value: 0, visible_count: 10, items: [] },
     },
+    topic_threads: {
+      available: false,
+      source_path: '',
+      total: 0,
+      items: [],
+    },
+  };
+}
+
+function loadTopicThreads(sourcePath: string): InsightsPayload['topic_threads'] {
+  if (!existsSync(sourcePath)) {
+    return { available: false, source_path: sourcePath, total: 0, items: [] };
+  }
+  try {
+    const parsed = JSON.parse(readFileSync(sourcePath, 'utf-8'));
+    const rows = Array.isArray(parsed) ? parsed : [];
+    const items = rows
+      .map((row, index) => normalizeTopicThread(row, index))
+      .filter((item): item is TopicThreadItem => Boolean(item));
+    return {
+      available: true,
+      source_path: sourcePath,
+      total: items.length,
+      items,
+    };
+  } catch {
+    return { available: false, source_path: sourcePath, total: 0, items: [] };
+  }
+}
+
+function normalizeTopicThread(value: unknown, index: number): TopicThreadItem | null {
+  const row = objectOf(value);
+  if (!row) return null;
+  const title = oneLine(str(row.title), 64);
+  const timeline = parseJsonArray(row.timeline).map((item) => oneLine(item, 120)).filter(Boolean);
+  if (!title || timeline.length === 0) return null;
+  return {
+    id: index + 1,
+    title,
+    description: oneLine(str(row.description), 120),
+    days: Math.max(1, Number(row.days ?? 1) || timeline.length),
+    groups: parseJsonArray(row.groups).slice(0, 8),
+    keywords: parseJsonArray(row.keywords).slice(0, 8),
+    timeline,
   };
 }
 

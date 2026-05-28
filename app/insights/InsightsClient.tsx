@@ -46,6 +46,16 @@ type DigestEventItem = HeatRankItem & {
   links: string[];
 };
 
+type TopicThreadItem = {
+  id: number;
+  title: string;
+  description: string;
+  days: number;
+  groups: string[];
+  keywords: string[];
+  timeline: string[];
+};
+
 type InsightsResp = {
   ok: boolean;
   available: boolean;
@@ -66,6 +76,12 @@ type InsightsResp = {
     topics: { max_value: number; visible_count: number; items: TopicRankItem[] };
     links: { max_value: number; visible_count: number; items: LinkRankItem[] };
     events: { max_value: number; visible_count: number; items: DigestEventItem[] };
+  };
+  topic_threads: {
+    available: boolean;
+    source_path: string;
+    total: number;
+    items: TopicThreadItem[];
   };
   error?: string;
 };
@@ -158,6 +174,8 @@ function InsightsDashboard({ data }: { data: InsightsResp }) {
         grid
         renderItem={(item) => <DigestEventRow item={item as DigestEventItem} />}
       />
+
+      <TopicThreadsSection threads={data.topic_threads.items} total={data.topic_threads.total} />
     </div>
   );
 }
@@ -294,6 +312,57 @@ function DigestEventRow({ item }: { item: DigestEventItem }) {
         {item.links.slice(0, 2).map((url, index) => <ExternalLinkChip key={`${item.id}-${url}-${index}`} url={url} compact />)}
       </div>
     </RankCard>
+  );
+}
+
+function TopicThreadsSection({ threads, total }: { threads: TopicThreadItem[]; total: number }) {
+  if (threads.length === 0) return null;
+
+  return (
+    <section className="rounded-md border border-[var(--border-soft)] bg-[var(--surface)]">
+      <div className="flex items-center justify-between gap-2 border-b border-[var(--border-soft)] px-4 py-3">
+        <div className="flex items-center gap-2 text-[13px] font-semibold">
+          <span className="text-[var(--accent)]"><TrendingUp size={15} /></span>
+          话题演化
+        </div>
+        <div className="text-[10px] text-[var(--text-3)]">{total} 条跨天线索</div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 p-3 xl:grid-cols-2">
+        {threads.map((thread) => (
+          <article key={`${thread.id}-${thread.title}`} className="rounded-md border border-[var(--border-soft)] bg-[var(--surface-2)] px-4 py-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="truncate text-[14px] font-semibold">{thread.title}</div>
+                {thread.description ? (
+                  <div className="mt-1 line-clamp-2 text-[11px] leading-5 text-[var(--text-3)]">{thread.description}</div>
+                ) : null}
+              </div>
+              <div className="shrink-0 rounded bg-[var(--accent-soft)] px-2 py-1 text-[10px] font-semibold text-[var(--accent)]">
+                {thread.days} 天 · {thread.groups.length} 群
+              </div>
+            </div>
+
+            <div className="mt-3 space-y-2 border-l border-[var(--border)] pl-3">
+              {thread.timeline.slice(0, 4).map((item, index) => (
+                <div key={`${thread.id}-step-${index}`} className="relative text-[11px] leading-5 text-[var(--text-2)]">
+                  <span className="absolute -left-[18px] top-1.5 h-2 w-2 rounded-full bg-[var(--accent)]" />
+                  {item}
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {thread.keywords.slice(0, 5).map((keyword) => (
+                <span key={`${thread.id}-${keyword}`} className="rounded bg-[var(--surface)] px-1.5 py-0.5 text-[10px] text-[var(--text-2)]">
+                  {keyword}
+                </span>
+              ))}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
   );
 }
 
