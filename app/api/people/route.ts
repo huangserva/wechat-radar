@@ -10,6 +10,7 @@ import {
   type AssistantTodo,
 } from '@/lib/assistant-source';
 import { loadLabProfileContext } from '@/lib/lab-profile';
+import { loadMemberActivityDelta } from '@/lib/member-activity-source';
 
 export const dynamic = 'force-dynamic';
 
@@ -72,6 +73,7 @@ export async function GET() {
     const people = buildPeople(todos, events, knowledge, today);
     const inventory = assistantDbInventory();
     const profile = loadLabProfileContext();
+    const memberActivity = loadMemberActivityDelta();
 
     return NextResponse.json({
       ok: true,
@@ -97,6 +99,7 @@ export async function GET() {
         dimensions: profile.dimensions,
         highlights: profileHighlights(profile.text),
       },
+      member_activity_delta: memberActivity,
       people,
     });
   } catch (e) {

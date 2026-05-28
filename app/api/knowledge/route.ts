@@ -6,6 +6,7 @@ import {
   getKnowledgeItems,
   type AssistantKnowledgeItem,
 } from '@/lib/assistant-source';
+import { loadKnowledgeTagGraph } from '@/lib/knowledge-graph-source';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,6 +21,7 @@ export async function GET(req: NextRequest) {
   try {
     const available = assistantDbAvailable();
     const items = getKnowledgeItems({ since, source_group: sourceGroup, limit: MAX_ITEMS });
+    const tagGraph = loadKnowledgeTagGraph();
 
     // category counts over the full (since/source-filtered) set
     const counts = new Map<string, number>();
@@ -46,6 +48,7 @@ export async function GET(req: NextRequest) {
       total: items.length,
       latest_date: latestDate,
       categories,
+      tag_graph: tagGraph,
       items: items.map(serializeItem),
       digests,
     });

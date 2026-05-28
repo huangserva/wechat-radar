@@ -5,11 +5,17 @@ import Sidebar from '@/components/Sidebar';
 import GlobalSearch from '@/components/GlobalSearch';
 import { safeExternalUrl } from '@/lib/safe-url';
 import {
+  Activity,
   AlertTriangle,
+  ArrowDownRight,
+  ArrowRight,
+  ArrowUpRight,
   BookOpen,
   CalendarClock,
   Database,
   ExternalLink,
+  Globe,
+  MessageSquare,
   Search,
   ShieldAlert,
   UserRound,
@@ -86,6 +92,29 @@ type PeopleResp = {
     dimensions: string[];
     highlights: string[];
   };
+  member_activity_delta: {
+    available: boolean;
+    window: {
+      recent_since: string | null;
+      recent_until: string | null;
+      prev_since: string | null;
+      prev_until: string | null;
+    };
+    summary: {
+      total_members: number;
+      sudden_active: number;
+      sudden_silent: number;
+      stable: number;
+    };
+    items: Array<{
+      wxid: string;
+      nick_name: string;
+      recent_count: number;
+      prev_count: number;
+      delta_pct: number;
+      label: '突然活跃' | '突然沉默' | '稳定';
+    }>;
+  };
   people: PersonSummary[];
   error?: string;
 };
@@ -105,17 +134,25 @@ export default function PeoplePage() {
   const [filter, setFilter] = useState<PeopleFilter>('all');
   const [category, setCategory] = useState('all');
   const [selectedName, setSelectedName] = useState<string | null>(null);
+  const [influenceData, setInfluenceData] = useState<Array<{ sender: string; group_breadth: number; link_share_count: number; influence_score: number }> | null>(null);
+  const [replyPairs, setReplyPairs] = useState<Array<{ from_sender: string; to_sender: string; count: number }> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
       try {
-        const r = await fetch('/api/people', { cache: 'no-store' });
-        const j = (await r.json()) as PeopleResp;
+        const [peopleRes, influenceRes, replyRes] = await Promise.all([
+          fetch('/api/people', { cache: 'no-store' }),
+          fetch('/api/cross-group-influence', { cache: 'no-store' }),
+          fetch('/api/reply-pairs', { cache: 'no-store' }),
+        ]);
+        const [peopleJson, influenceJson, replyJson] = await Promise.all([peopleRes.json(), influenceRes.json(), replyRes.json()]);
         if (cancelled) return;
-        if (!j.ok) throw new Error(j.error ?? '加载失败');
-        setData(j);
+        if (!peopleJson.ok) throw new Error(peopleJson.error ?? '加载失败');
+        setData(peopleJson);
+        if (influenceJson.ok && influenceJson.available) setInfluenceData(influenceJson.top);
+        if (replyJson.ok && replyJson.available) setReplyPairs(replyJson.pairs);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : '加载失败');
       } finally {
@@ -265,6 +302,10 @@ export default function PeoplePage() {
           </aside>
 
           <section className="min-h-0 overflow-y-auto p-5">
+            <ActivityDeltaPanel data={data?.member_activity_delta ?? null} />
+            <CrossGroupInfluencePanel data={influenceData} />
+            <ReplyPairsPanel data={replyPairs} />
+
             {!selected ? (
               <EmptyState title="选择一个显示名" text="左侧列表为空或筛选条件没有命中。" tall />
             ) : (
@@ -273,6 +314,179 @@ export default function PeoplePage() {
           </section>
         </div>
       </main>
+    </div>
+  );
+}
+
+function ActivityDeltaPanel({ data }: { data: PeopleResp['member_activity_delta'] | null }) {
+  if (!data?.available || data.items.length === 0) return null;
+  const top = data.items.slice(0, 8);
+  const maxCount = Math.max(1, ...top.flatMap((item) => [item.recent_count, item.prev_count]));
+  const windowText = data.window.recent_since && data.window.recent_until
+    ? `${data.window.recent_since} ~ ${data.window.recent_until}`
+    : '近 7 天';
+
+  return (
+    <section className="mb-4 rounded-md border border-[var(--border-soft)] bg-[var(--surface)]">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-soft)] px-4 py-3">
+        <div>
+          <div className="flex items-center gap-2 text-[13px] font-semibold">
+            <Activity size={15} className="text-[var(--accent)]" />
+            活跃变化 · Top movers
+          </div>
+          <div className="mt-0.5 text-[10px] text-[var(--text-3)]">
+            {windowText} vs 前 7 天 · 排除 owner 与低量噪音
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-1.5 text-[10px]">
+          <span className="rounded bg-[var(--accent-soft)] px-2 py-1 text-[var(--accent)]">活跃 {data.summary.sudden_active}</span>
+          <span className="rounded bg-[var(--warn-soft)] px-2 py-1 text-[var(--warn)]">沉默 {data.summary.sudden_silent}</span>
+          <span className="rounded bg-[var(--surface-2)] px-2 py-1 text-[var(--text-3)]">样本 {data.summary.total_members}</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-2 p-3 2xl:grid-cols-2">
+        {top.map((item, index) => (
+          <ActivityDeltaCard key={item.wxid} item={item} rank={index + 1} maxCount={maxCount} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function CrossGroupInfluencePanel({ data }: { data: Array<{ sender: string; group_breadth: number; link_share_count: number; influence_score: number }> | null }) {
+  if (!data || data.length === 0) return null;
+  const maxScore = Math.max(1, ...data.map((d) => d.influence_score));
+
+  return (
+    <section className="mb-4 rounded-md border border-[var(--border-soft)] bg-[var(--surface)]">
+      <div className="flex items-center justify-between border-b border-[var(--border-soft)] px-4 py-3">
+        <div>
+          <div className="flex items-center gap-2 text-[13px] font-semibold">
+            <Globe size={15} className="text-[var(--accent)]" />
+            跨群影响力 Top {data.length}
+          </div>
+          <div className="mt-0.5 text-[10px] text-[var(--text-3)]">
+            跨群广度 + 链接分享 + 域名多样性 · 排除主人
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-1 p-3">
+        {data.map((item, index) => (
+          <div key={item.sender} className="flex items-center gap-3 rounded px-2 py-1.5 text-[11px]">
+            <span className="w-5 text-right tabular-nums text-[var(--text-3)]">{index + 1}</span>
+            <span className="w-[120px] truncate font-medium text-[var(--text)]">{item.sender}</span>
+            <div className="flex h-2.5 flex-1 overflow-hidden rounded-full bg-[var(--surface-2)]">
+              <div className="h-full rounded-full bg-[var(--accent)]" style={{ width: `${(item.influence_score / maxScore) * 100}%` }} />
+            </div>
+            <span className="w-12 text-right tabular-nums text-[var(--text-2)]">{item.influence_score}</span>
+            <span className="w-[70px] text-right text-[var(--text-3)]">{item.group_breadth} 群</span>
+            <span className="w-[60px] text-right text-[var(--text-3)]">{item.link_share_count} 链接</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ReplyPairsPanel({ data }: { data: Array<{ from_sender: string; to_sender: string; count: number }> | null }) {
+  if (!data || data.length === 0) return null;
+  const maxCount = Math.max(1, ...data.map((d) => d.count));
+
+  return (
+    <section className="mb-4 rounded-md border border-[var(--border-soft)] bg-[var(--surface)]">
+      <div className="flex items-center justify-between border-b border-[var(--border-soft)] px-4 py-3">
+        <div>
+          <div className="flex items-center gap-2 text-[13px] font-semibold">
+            <MessageSquare size={15} className="text-[var(--accent)]" />
+            互动热度 Top {data.length}
+          </div>
+          <div className="mt-0.5 text-[10px] text-[var(--text-3)]">
+            同群 5 分钟内连续消息对 · 双向合并 · count ≥ 5
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-1 p-3">
+        {data.map((item, index) => (
+          <div key={`${item.from_sender}-${item.to_sender}`} className="flex items-center gap-3 rounded px-2 py-1.5 text-[11px]">
+            <span className="w-5 text-right tabular-nums text-[var(--text-3)]">{index + 1}</span>
+            <span className="w-[100px] truncate font-medium text-[var(--text)]">{item.from_sender}</span>
+            <span className="text-[var(--text-3)]">↔</span>
+            <span className="w-[100px] truncate font-medium text-[var(--text)]">{item.to_sender}</span>
+            <div className="flex h-2.5 flex-1 overflow-hidden rounded-full bg-[var(--surface-2)]">
+              <div className="h-full rounded-full bg-[var(--warn)]" style={{ width: `${(item.count / maxCount) * 100}%` }} />
+            </div>
+            <span className="w-12 text-right tabular-nums text-[var(--text-2)]">{item.count}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ActivityDeltaCard({
+  item,
+  rank,
+  maxCount,
+}: {
+  item: PeopleResp['member_activity_delta']['items'][number];
+  rank: number;
+  maxCount: number;
+}) {
+  const tone = item.label === '突然活跃' ? 'active' : item.label === '突然沉默' ? 'silent' : 'stable';
+  const recentWidth = Math.max(4, Math.round((item.recent_count / maxCount) * 100));
+  const prevWidth = Math.max(4, Math.round((item.prev_count / maxCount) * 100));
+  const Icon = tone === 'active' ? ArrowUpRight : tone === 'silent' ? ArrowDownRight : ArrowRight;
+  const color = tone === 'active'
+    ? 'text-[var(--accent)]'
+    : tone === 'silent'
+      ? 'text-[var(--warn)]'
+      : 'text-[var(--text-3)]';
+  const chip = tone === 'active'
+    ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+    : tone === 'silent'
+      ? 'bg-[var(--warn-soft)] text-[var(--warn)]'
+      : 'bg-[var(--surface)] text-[var(--text-3)]';
+
+  return (
+    <article className="rounded-md border border-[var(--border-soft)] bg-[var(--surface-2)] px-3 py-2.5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-[var(--surface)] text-[11px] font-semibold text-[var(--text-2)]">
+            #{rank}
+          </span>
+          <div className="min-w-0">
+            <div className="truncate text-[13px] font-semibold">{item.nick_name}</div>
+            <div className="mt-0.5 text-[10px] text-[var(--text-3)]">近7天 {item.recent_count} · 前7天 {item.prev_count}</div>
+          </div>
+        </div>
+        <div className="shrink-0 text-right">
+          <div className={`flex items-center justify-end gap-1 text-[16px] font-semibold tabular-nums ${color}`}>
+            <Icon size={15} />
+            {item.delta_pct > 0 ? '+' : ''}{item.delta_pct}%
+          </div>
+          <span className={`mt-1 inline-flex rounded px-1.5 py-0.5 text-[10px] ${chip}`}>{item.label}</span>
+        </div>
+      </div>
+      <div className="mt-2 space-y-1.5">
+        <MiniBar label="近7天" value={item.recent_count} width={recentWidth} tone={tone === 'active' ? 'accent' : 'muted'} />
+        <MiniBar label="前7天" value={item.prev_count} width={prevWidth} tone={tone === 'silent' ? 'warn' : 'muted'} />
+      </div>
+    </article>
+  );
+}
+
+function MiniBar({ label, value, width, tone }: { label: string; value: number; width: number; tone: 'accent' | 'warn' | 'muted' }) {
+  const cls = tone === 'accent' ? 'bg-[var(--accent)]' : tone === 'warn' ? 'bg-[var(--warn)]' : 'bg-[var(--text-3)]';
+  return (
+    <div className="grid grid-cols-[44px_1fr_34px] items-center gap-2 text-[10px] text-[var(--text-3)]">
+      <span>{label}</span>
+      <div className="h-1.5 overflow-hidden rounded-full bg-[var(--surface)]">
+        <div className={`h-full rounded-full ${cls}`} style={{ width: `${width}%` }} />
+      </div>
+      <span className="text-right tabular-nums">{value}</span>
     </div>
   );
 }

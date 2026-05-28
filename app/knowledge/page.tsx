@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import GlobalSearch from '@/components/GlobalSearch';
-import { BookOpen, Database, ExternalLink, Hash, Search, Users } from 'lucide-react';
+import { BookOpen, Database, ExternalLink, GitBranch, Hash, Search, Tags, Users } from 'lucide-react';
 import { safeExternalUrl } from '@/lib/safe-url';
 
 type KnowledgeItem = {
@@ -20,12 +20,32 @@ type KnowledgeItem = {
 
 type CategoryStat = { key: string; count: number };
 
+type KnowledgeTagGraph = {
+  available: boolean;
+  total_tags: number;
+  total_pairs: number;
+  top_tags: Array<{
+    tag: string;
+    count: number;
+    weight: number;
+    size: number;
+  }>;
+  top_pairs: Array<{
+    tag_a: string;
+    tag_b: string;
+    count: number;
+    score: number;
+    sample_topics: string[];
+  }>;
+};
+
 type KnowledgeResp = {
   ok: boolean;
   available: boolean;
   total: number;
   latest_date: string | null;
   categories: CategoryStat[];
+  tag_graph: KnowledgeTagGraph;
   items: KnowledgeItem[];
   digests: Array<{ date: string; text: string; has_json: boolean }>;
   error?: string;
@@ -134,6 +154,14 @@ export default function KnowledgePage() {
             </div>
           </div>
 
+          {data?.tag_graph?.available && (
+            <TagCooccurrencePanel
+              graph={data.tag_graph}
+              activeQuery={query}
+              onSelectTag={(tag) => setQuery(tag)}
+            />
+          )}
+
           {/* list */}
           <div className="mt-4">
             {error ? (
@@ -167,6 +195,117 @@ export default function KnowledgePage() {
         </div>
       </main>
     </div>
+  );
+}
+
+function TagCooccurrencePanel({
+  graph,
+  activeQuery,
+  onSelectTag,
+}: {
+  graph: KnowledgeTagGraph;
+  activeQuery: string;
+  onSelectTag: (tag: string) => void;
+}) {
+  if (graph.top_tags.length === 0 && graph.top_pairs.length === 0) return null;
+  const maxPair = Math.max(1, ...graph.top_pairs.map((pair) => pair.count));
+
+  return (
+    <section className="mt-4 rounded-md border border-[var(--border-soft)] bg-[var(--surface)]">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-soft)] px-4 py-3">
+        <div>
+          <div className="flex items-center gap-2 text-[13px] font-semibold">
+            <GitBranch size={15} className="text-[var(--accent)]" />
+            标签共现图谱
+          </div>
+          <div className="mt-0.5 text-[10px] text-[var(--text-3)]">
+            {graph.total_tags} 个标签 · {graph.total_pairs} 组共现 · 点击标签筛选知识条目
+          </div>
+        </div>
+        {activeQuery ? (
+          <button
+            type="button"
+            onClick={() => onSelectTag('')}
+            className="rounded-md border border-[var(--border-soft)] bg-[var(--surface-2)] px-2 py-1 text-[11px] text-[var(--text-2)] hover:text-[var(--accent)]"
+          >
+            清除标签筛选
+          </button>
+        ) : null}
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 p-4 2xl:grid-cols-[1fr_0.9fr]">
+        <div>
+          <div className="mb-2 flex items-center gap-1.5 text-[12px] font-semibold">
+            <Tags size={14} className="text-[var(--accent)]" />
+            高频标签云
+          </div>
+          <div className="flex flex-wrap items-center gap-2 rounded-md border border-[var(--border-soft)] bg-[var(--surface-2)] p-3">
+            {graph.top_tags.slice(0, 32).map((tag) => (
+              <button
+                key={tag.tag}
+                type="button"
+                onClick={() => onSelectTag(tag.tag)}
+                className={`rounded-md px-2 py-1 leading-none transition-colors ${
+                  activeQuery.trim().toLowerCase() === tag.tag.toLowerCase()
+                    ? 'bg-[var(--accent)] text-black'
+                    : 'bg-[var(--surface)] text-[var(--text-2)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent)]'
+                }`}
+                style={{ fontSize: `${tag.size}px` }}
+                title={`${tag.count} 条知识 · 权重 ${tag.weight}`}
+              >
+                {tag.tag}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <div className="mb-2 flex items-center gap-1.5 text-[12px] font-semibold">
+            <Hash size={14} className="text-[var(--accent)]" />
+            Top 共现对
+          </div>
+          <div className="space-y-2">
+            {graph.top_pairs.slice(0, 10).map((pair, index) => (
+              <div key={`${pair.tag_a}-${pair.tag_b}`} className="rounded-md border border-[var(--border-soft)] bg-[var(--surface-2)] px-3 py-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="rounded bg-[var(--surface)] px-1.5 py-0.5 text-[10px] text-[var(--text-3)]">#{index + 1}</span>
+                    <TagButton tag={pair.tag_a} onClick={onSelectTag} />
+                    <span className="text-[var(--text-3)]">×</span>
+                    <TagButton tag={pair.tag_b} onClick={onSelectTag} />
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <div className="text-[14px] font-semibold tabular-nums text-[var(--accent)]">{pair.count}</div>
+                    <div className="text-[10px] text-[var(--text-3)]">次共现</div>
+                  </div>
+                </div>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--surface)]">
+                  <div className="h-full rounded-full bg-[var(--accent)]" style={{ width: `${Math.max(8, Math.round((pair.count / maxPair) * 100))}%` }} />
+                </div>
+                {pair.sample_topics.length > 0 ? (
+                  <div className="mt-1 truncate text-[10px] text-[var(--text-3)]" title={pair.sample_topics.join(' / ')}>
+                    {pair.sample_topics[0]}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function TagButton({ tag, onClick }: { tag: string; onClick: (tag: string) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onClick(tag)}
+      className="max-w-[150px] truncate rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-black"
+      title={`筛选 ${tag}`}
+    >
+      {tag}
+    </button>
   );
 }
 
