@@ -31,6 +31,12 @@ type HotspotsResp = {
   stats: { topic_count: number; url_count: number; group_estimate: number; max_mentions: number };
   topics: HotTopic[];
   urls: HotUrl[];
+  aliases?: {
+    synonym_groups: Array<{ canonical: string; aliases: string[] }>;
+    ignored: string[];
+    last_updated: string | null;
+    total: number;
+  };
   error?: string;
 };
 
@@ -232,6 +238,50 @@ export default function HotspotsPage() {
                 </div>
               </section>
             </div>
+          )}
+
+          {/* learned aliases */}
+          {data?.aliases && data.aliases.total > 0 && (
+            <section className="card mt-4">
+              <div className="flex items-center justify-between border-b border-[var(--border-soft)] px-4 py-2">
+                <div className="flex items-center gap-2 text-[12px] font-semibold">
+                  <GitMerge size={14} className="text-[var(--accent)]" />
+                  <span>已学习的话题别名</span>
+                </div>
+                <span className="text-[10px] text-[var(--text-3)]">{data.aliases.total} 条 · {data.aliases.last_updated ?? '—'}</span>
+              </div>
+              <div className="p-4 space-y-3">
+                {/* Synonym groups */}
+                {data.aliases.synonym_groups.length > 0 && (
+                  <div>
+                    <div className="mb-2 text-[11px] font-semibold text-[var(--text-2)]">同义词映射（Top {data.aliases.synonym_groups.length}）</div>
+                    <div className="flex flex-wrap gap-2">
+                      {data.aliases.synonym_groups.map((g) => (
+                        <div key={g.canonical} className="rounded-md border border-[var(--border-soft)] bg-[var(--surface-2)] px-2.5 py-1.5 text-[11px]">
+                          <span className="font-medium text-[var(--accent)]">{g.canonical}</span>
+                          <span className="mx-1 text-[var(--text-3)]">←</span>
+                          <span className="text-[var(--text-3)]">{g.aliases.join(', ')}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {/* Ignored */}
+                {data.aliases.ignored.length > 0 && (
+                  <div>
+                    <div className="mb-2 text-[11px] font-semibold text-[var(--text-2)]">已忽略的话题噪音（{data.aliases.ignored.length} 条）</div>
+                    <div className="flex flex-wrap gap-1">
+                      {data.aliases.ignored.slice(0, 30).map((w) => (
+                        <span key={w} className="rounded bg-[var(--surface)] px-1.5 py-0.5 text-[10px] text-[var(--text-3)]">{w}</span>
+                      ))}
+                      {data.aliases.ignored.length > 30 && (
+                        <span className="text-[10px] text-[var(--text-3)]">+{data.aliases.ignored.length - 30} 更多</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </section>
           )}
 
           <div className="mt-4 rounded-md border border-[var(--border-soft)] bg-[var(--surface)] px-3 py-2 text-[11px] leading-5 text-[var(--text-3)]">

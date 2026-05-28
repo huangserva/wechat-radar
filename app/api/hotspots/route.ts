@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import {
   assistantDbAvailable,
   assistantDbInventory,
@@ -59,10 +62,43 @@ export async function GET(req: NextRequest) {
         first_group: u.first_group,
         first_time: u.first_time,
       })),
+      aliases: loadLearnedAliases(),
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : 'unknown error';
     console.error('/api/hotspots failed', e);
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
+function loadLearnedAliases(): { synonym_groups: Array<{ canonical: string; aliases: string[] }>; ignored: string[]; last_updated: string | null; total: number } {
+  const path = join(homedir(), 'wechat-assistant', 'learned_aliases.json');
+  if (!existsSync(path)) return { synonym_groups: [], ignored: [], last_updated: null, total: 0 };
+  try {
+    const raw = JSON.parse(readFileSync(path, 'utf-8')) as { aliases?: Record<string, string>; last_updated?: string; stats?: { total_learned?: number } };
+    const aliases = raw.aliases ?? {};
+    const synonyms = new Map<string, string[]>();
+    const ignored: string[] = [];
+    for (const [alias, target] of Object.entries(aliases)) {
+      if (target === '__IGNORE__') {
+        ignored.push(alias);
+      } else {
+        const list = synonyms.get(target) ?? [];
+        list.push(alias);
+        synonyms.set(target, list);
+      }
+    }
+    const synonym_groups = Array.from(synonyms.entries())
+      .map(([canonical, als]) => ({ canonical, aliases: als }))
+      .sort((a, b) => b.aliases.length - a.aliases.length)
+      .slice(0, 30);
+    return {
+      synonym_groups,
+      ignored: ignored.slice(0, 50),
+      last_updated: raw.last_updated ?? null,
+      total: raw.stats?.total_learned ?? Object.keys(aliases).length,
+    };
+  } catch {
+    return { synonym_groups: [], ignored: [], last_updated: null, total: 0 };
   }
 }

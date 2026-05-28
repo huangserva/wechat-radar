@@ -81,6 +81,7 @@ export default function ProfilePage() {
   const [data, setData] = useState<ProfileResp | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'profile' | 'materials'>('profile');
 
   useEffect(() => {
     let cancelled = false;
@@ -132,18 +133,38 @@ export default function ProfilePage() {
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          {error ? (
-            <EmptyState title="画像加载失败" text={error} tall />
-          ) : loading ? (
-            <LoadingState />
-          ) : !data?.available ? (
-            <EmptyState
-              title="画像文件暂不可读"
-              text={`未找到 ${data?.source_path ?? 'profile/*_profile.json'}；页面会保持空态，不写入任何数据。`}
-              tall
-            />
+          {/* Tab toggle */}
+          <div className="mb-4 flex items-center gap-1 rounded-md border border-[var(--border-soft)] bg-[var(--surface)] p-0.5 w-fit">
+            <button
+              onClick={() => setActiveTab('profile')}
+              className={`rounded px-3 py-1.5 text-[12px] font-medium transition-colors ${activeTab === 'profile' ? 'bg-[var(--accent-soft)] text-[var(--accent)]' : 'text-[var(--text-3)] hover:text-[var(--text)]'}`}
+            >
+              画像
+            </button>
+            <button
+              onClick={() => setActiveTab('materials')}
+              className={`rounded px-3 py-1.5 text-[12px] font-medium transition-colors ${activeTab === 'materials' ? 'bg-[var(--accent-soft)] text-[var(--accent)]' : 'text-[var(--text-3)] hover:text-[var(--text)]'}`}
+            >
+              素材
+            </button>
+          </div>
+
+          {activeTab === 'profile' ? (
+            error ? (
+              <EmptyState title="画像加载失败" text={error} tall />
+            ) : loading ? (
+              <LoadingState />
+            ) : !data?.available ? (
+              <EmptyState
+                title="画像文件暂不可读"
+                text={`未找到 ${data?.source_path ?? 'profile/*_profile.json'}；页面会保持空态，不写入任何数据。`}
+                tall
+              />
+            ) : (
+              <ProfileContent data={data} />
+            )
           ) : (
-            <ProfileContent data={data} />
+            <MaterialsContent />
           )}
         </div>
       </main>
@@ -358,6 +379,130 @@ function LoadingState() {
         {Array.from({ length: 6 }).map((_, index) => (
           <div key={index} className="h-[260px] animate-pulse rounded-md border border-[var(--border-soft)] bg-[var(--surface)]" />
         ))}
+      </div>
+    </div>
+  );
+}
+
+type MaterialsData = {
+  ok: boolean;
+  available: boolean;
+  days: Array<{ date: string; preference_count: number; writing_samples_count: number; category_counts: Record<string, number> }>;
+  totals: { preferences: number; writing_samples: number; categories: Record<string, number> };
+  total_days: number;
+};
+
+const CATEGORY_LABELS: Record<string, string> = {
+  tech: '技术偏好',
+  business: '商业判断',
+  decision: '决策模式',
+  opinion: '观点表达',
+};
+
+const CATEGORY_COLORS: Record<string, string> = {
+  tech: 'bg-[var(--accent)]',
+  business: 'bg-[var(--warn)]',
+  decision: 'bg-purple-500',
+  opinion: 'bg-blue-400',
+};
+
+function MaterialsContent() {
+  const [data, setData] = useState<MaterialsData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await fetch('/api/profile/materials', { cache: 'no-store' });
+        const j = (await r.json()) as MaterialsData;
+        if (!cancelled) setData(j);
+      } catch {
+        if (!cancelled) setData(null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  if (loading) return <div className="py-20 text-center text-[12px] text-[var(--text-3)]">加载素材统计…</div>;
+  if (!data?.available) return <EmptyState title="暂无素材数据" text="preferences/ 目录为空或不可读。" tall />;
+
+  const catEntries = Object.entries(data.totals.categories).sort((a, b) => b[1] - a[1]);
+  const maxDaily = Math.max(1, ...data.days.map((d) => d.preference_count));
+
+  return (
+    <div className="space-y-4">
+      {/* Totals */}
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <MetricCard icon={<FileText size={14} />} label="偏好素材" value={data.totals.preferences} sub={`${data.total_days} 天归档`} />
+        <MetricCard icon={<Activity size={14} />} label="写作样本" value={data.totals.writing_samples} sub="仅统计数量，不展示原文" />
+        <MetricCard icon={<Sparkles size={14} />} label="分类数" value={catEntries.length} sub={catEntries.map(([k]) => CATEGORY_LABELS[k] ?? k).join('、')} />
+        <MetricCard icon={<History size={14} />} label="归档天数" value={data.total_days} sub={data.days.length > 0 ? `${data.days[data.days.length - 1].date} → ${data.days[0].date}` : '—'} />
+      </div>
+
+      {/* Category distribution */}
+      <section className="rounded-md border border-[var(--border-soft)] bg-[var(--surface)] p-4">
+        <div className="mb-3 text-[12px] font-semibold text-[var(--text-2)]">分类分布</div>
+        <div className="space-y-2">
+          {catEntries.map(([cat, count]) => {
+            const pct = data.totals.preferences > 0 ? (count / data.totals.preferences) * 100 : 0;
+            return (
+              <div key={cat} className="flex items-center gap-3">
+                <span className="w-[72px] shrink-0 text-[11px] text-[var(--text-2)]">{CATEGORY_LABELS[cat] ?? cat}</span>
+                <div className="flex h-3 flex-1 overflow-hidden rounded-full bg-[var(--surface-2)]">
+                  <div className={`h-full ${CATEGORY_COLORS[cat] ?? 'bg-[var(--text-3)]'}`} style={{ width: `${pct}%` }} />
+                </div>
+                <span className="w-8 text-right text-[11px] tabular-nums text-[var(--text-2)]">{count}</span>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* Daily trend (sparkline-style bars) */}
+      <section className="rounded-md border border-[var(--border-soft)] bg-[var(--surface)] p-4">
+        <div className="mb-3 text-[12px] font-semibold text-[var(--text-2)]">每日素材趋势（近 {Math.min(data.days.length, 30)} 天）</div>
+        <div className="flex items-end gap-0.5" style={{ height: 80 }}>
+          {data.days.slice(0, 30).reverse().map((d) => {
+            const h = d.preference_count > 0 ? Math.max(4, (d.preference_count / maxDaily) * 100) : 0;
+            return (
+              <div
+                key={d.date}
+                className="flex-1 rounded-t bg-[var(--accent)] transition-all"
+                style={{ height: `${h}%`, minWidth: 4 }}
+                title={`${d.date}: ${d.preference_count} 条偏好, ${d.writing_samples_count} 写作样本`}
+              />
+            );
+          })}
+        </div>
+        <div className="mt-1 flex justify-between text-[9px] text-[var(--text-3)]">
+          <span>{data.days.length > 30 ? data.days[data.days.length - 1].date : data.days[data.days.length - 1]?.date ?? ''}</span>
+          <span>{data.days[0]?.date ?? ''}</span>
+        </div>
+      </section>
+
+      {/* Daily detail table */}
+      <section className="rounded-md border border-[var(--border-soft)] bg-[var(--surface)]">
+        <div className="border-b border-[var(--border-soft)] px-4 py-2 text-[12px] font-semibold text-[var(--text-2)]">每日明细</div>
+        <div className="max-h-[300px] overflow-y-auto">
+          {data.days.slice(0, 30).map((d) => (
+            <div key={d.date} className="flex items-center gap-3 border-b border-[var(--border-soft)] px-4 py-1.5 text-[11px] last:border-0">
+              <span className="w-[80px] shrink-0 font-medium text-[var(--text)]">{d.date}</span>
+              <span className="w-[60px] shrink-0 text-[var(--text-3)]">偏好 {d.preference_count}</span>
+              <span className="w-[60px] shrink-0 text-[var(--text-3)]">样本 {d.writing_samples_count}</span>
+              <span className="flex-1 truncate text-[var(--text-3)]">
+                {Object.entries(d.category_counts).map(([k, v]) => `${CATEGORY_LABELS[k] ?? k} ${v}`).join(' · ')}
+              </span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="rounded-md border border-[rgba(213,162,83,0.32)] bg-[var(--warn-soft)] px-3 py-2 text-[11px] leading-5 text-[var(--text-3)]">
+        隐私说明：本面板仅展示统计数量和分类分布，不展开任何原始消息内容、上下文或写作样本原文。
       </div>
     </div>
   );

@@ -15,6 +15,7 @@ import {
   History,
   ListFilter,
   MessageSquare,
+  Sparkles,
   Star,
   Trophy,
 } from 'lucide-react';
@@ -78,6 +79,7 @@ export default function GroupDetailPage({
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [targetNotFound, setTargetNotFound] = useState(false);
+  const [groupProfile, setGroupProfile] = useState<Record<string, unknown> | null>(null);
 
   const load = async (d: string) => {
     setLoading(true);
@@ -150,10 +152,25 @@ export default function GroupDetailPage({
       try {
         const r = await fetch(`/api/group-tags?chatroom_id=${encodeURIComponent(chatroomId)}`);
         const j = await r.json();
-        if (j.ok && Array.isArray(j.group_ids)) setFav(false); // tags only, fav read separately if needed
+        if (j.ok && Array.isArray(j.group_ids)) setFav(false);
       } catch {}
     })();
   }, [chatroomId]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch('/api/group-profiles', { cache: 'no-store' });
+        const j = await r.json();
+        if (j.ok && j.available && j.profiles) {
+          const groupName = data?.stats?.chat;
+          if (groupName && j.profiles[groupName]) {
+            setGroupProfile(j.profiles[groupName]);
+          }
+        }
+      } catch {}
+    })();
+  }, [data?.stats?.chat]);
 
   const toggleFav = async () => {
     const next = !fav;
@@ -366,6 +383,9 @@ export default function GroupDetailPage({
             </div>
           )}
 
+          {/* 群画像 */}
+          {groupProfile && <GroupProfileCard profile={groupProfile} />}
+
           {/* 当日完整消息列表 */}
           <div className="card mt-4 overflow-hidden">
             <div className="flex items-center justify-between border-b border-[var(--border-soft)] px-5 py-3">
@@ -424,6 +444,81 @@ export default function GroupDetailPage({
           </div>
         </div>
       </main>
+    </div>
+  );
+}
+
+function GroupProfileCard({ profile }: { profile: Record<string, unknown> }) {
+  const tags = (profile.tags as string[]) ?? [];
+  const activityLevel = (profile.activity_level as string) ?? 'unknown';
+  const contentStyle = (profile.content_style as string) ?? '';
+  const coreTopics = (profile.core_topics as string[]) ?? [];
+  const stats = (profile.stats ?? {}) as Record<string, unknown>;
+  const totalItems = (stats.total_items as number) ?? 0;
+  const activeDays = (stats.active_days as number) ?? 0;
+  const categories = (stats.categories ?? {}) as Record<string, number>;
+
+  const activityColor = activityLevel === 'high' ? 'text-[var(--accent)]' : activityLevel === 'medium' ? 'text-[var(--warn)]' : 'text-[var(--text-3)]';
+  const activityLabel = activityLevel === 'high' ? '高活跃' : activityLevel === 'medium' ? '中活跃' : activityLevel === 'low' ? '低活跃' : '未知';
+
+  return (
+    <div className="card mt-4 p-5">
+      <div className="mb-3 flex items-center gap-1.5 text-[14px] font-semibold">
+        <Sparkles size={14} className="text-[var(--accent)]" />
+        群画像
+      </div>
+
+      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+        <div>
+          <div className="text-[10px] text-[var(--text-3)]">活跃度</div>
+          <div className={`mt-0.5 text-[13px] font-medium ${activityColor}`}>{activityLabel}</div>
+        </div>
+        <div>
+          <div className="text-[10px] text-[var(--text-3)]">内容风格</div>
+          <div className="mt-0.5 text-[13px] text-[var(--text)]">{contentStyle || '—'}</div>
+        </div>
+        <div>
+          <div className="text-[10px] text-[var(--text-3)]">知识条目</div>
+          <div className="mt-0.5 text-[13px] tabular-nums text-[var(--text)]">{totalItems}</div>
+        </div>
+        <div>
+          <div className="text-[10px] text-[var(--text-3)]">活跃天数</div>
+          <div className="mt-0.5 text-[13px] tabular-nums text-[var(--text)]">{activeDays}</div>
+        </div>
+      </div>
+
+      {tags.length > 0 && (
+        <div className="mt-3">
+          <div className="text-[10px] text-[var(--text-3)]">话题标签</div>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {tags.map((tag) => (
+              <span key={tag} className="rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-[11px] text-[var(--accent)]">{tag}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {coreTopics.length > 0 && (
+        <div className="mt-3">
+          <div className="text-[10px] text-[var(--text-3)]">核心话题</div>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {coreTopics.map((topic) => (
+              <span key={topic} className="rounded bg-[var(--surface-2)] px-1.5 py-0.5 text-[11px] text-[var(--text-2)]">{topic}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {Object.keys(categories).length > 0 && (
+        <div className="mt-3">
+          <div className="text-[10px] text-[var(--text-3)]">分类分布</div>
+          <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-[var(--text-2)]">
+            {Object.entries(categories).sort((a, b) => b[1] - a[1]).map(([cat, count]) => (
+              <span key={cat}>{cat} {count}</span>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
