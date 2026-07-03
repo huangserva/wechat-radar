@@ -6,7 +6,14 @@
  * Run: `pnpm test` (or `pnpm exec tsx lib/decrypt.test.ts`). Tiny assert runner.
  */
 import assert from 'node:assert/strict';
-import { parseRefreshSummary, personalKeyExtractCommand, wecomKeyExtractCommand } from './decrypt';
+import {
+  parseRefreshSummary,
+  personalKeyExtractCommand,
+  wecomKeyExtractCommand,
+  fridaExtractCommand,
+  matchKeysCommand,
+  keyExtractStrategies,
+} from './decrypt';
 import type { Config } from './config';
 
 let passed = 0;
@@ -61,6 +68,52 @@ check('wecomKeyExtractCommand mentions sudo + wecom scanner + profile', () => {
   assert.ok(cmd.includes('sudo'), 'has sudo');
   assert.ok(cmd.includes('find_wecom_keys_macos'), 'has wecom scanner');
   assert.ok(cmd.includes('Profiles/ABC'), 'has profile dir');
+});
+
+// --- Frida fallback (M8): command generators must produce strings only,
+//     mention the driver, and never run anything. ---
+const fcfg = {
+  keysFile: '/Users/x/wechat-assistant/all_keys.json',
+  wecomKeysFile: '/Users/x/wechat-assistant/wecom_keys.json',
+  wechatDbDir: '/Users/x/Library/.../db_storage',
+  wecomDbDir: '/Users/x/Library/.../Profiles/ABC',
+  decryptPythonBin: '',
+} as unknown as Config;
+
+check('fridaExtractCommand personal: sudo + driver + target + out', () => {
+  const cmd = fridaExtractCommand(fcfg, 'personal');
+  assert.ok(cmd.includes('sudo'), 'has sudo');
+  assert.ok(cmd.includes('frida_extract.py'), 'has driver');
+  assert.ok(cmd.includes('--target personal'), 'target personal');
+  assert.ok(cmd.includes('all_keys.json'), 'personal out');
+});
+
+check('fridaExtractCommand wecom: target wecom + wecom out + db-dir', () => {
+  const cmd = fridaExtractCommand(fcfg, 'wecom');
+  assert.ok(cmd.includes('--target wecom'), 'target wecom');
+  assert.ok(cmd.includes('wecom_keys.json'), 'wecom out');
+  assert.ok(cmd.includes('--db-dir'), 'has db-dir when configured');
+});
+
+check('matchKeysCommand: matcher + keys-file + db-dir, no sudo (read-only)', () => {
+  const cmd = matchKeysCommand(fcfg, 'personal');
+  assert.ok(cmd.includes('match_keys.py'), 'has matcher');
+  assert.ok(cmd.includes('--keys-file'), 'has keys-file');
+  assert.ok(cmd.includes('--db-dir'), 'has db-dir');
+  assert.ok(!cmd.startsWith('sudo'), 'match_keys needs no root');
+});
+
+check('keyExtractStrategies personal: ordered scan → frida → match', () => {
+  const s = keyExtractStrategies(fcfg, 'personal');
+  assert.deepEqual(s.map((x) => x.id), ['memory-scan', 'frida-fallback', 'match-keys']);
+  assert.ok(s[0].command.includes('find_all_keys_macos'), 'step1 memory scan');
+  assert.ok(s[1].command.includes('frida_extract.py'), 'step2 frida');
+});
+
+check('keyExtractStrategies wecom: scan → frida (no match-keys step)', () => {
+  const s = keyExtractStrategies(fcfg, 'wecom');
+  assert.deepEqual(s.map((x) => x.id), ['memory-scan', 'frida-fallback']);
+  assert.ok(s[0].command.includes('find_wecom_keys_macos'), 'step1 wecom scan');
 });
 
 const total = passed + failed;

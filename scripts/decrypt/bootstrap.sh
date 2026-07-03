@@ -5,7 +5,8 @@
 # memory key scanners from source (arch-specific — never ship the binary).
 #
 # Usage:
-#   scripts/decrypt/bootstrap.sh
+#   scripts/decrypt/bootstrap.sh              # base toolchain
+#   scripts/decrypt/bootstrap.sh --with-frida # also install the Frida fallback deps
 #
 # Idempotent: re-running upgrades deps and recompiles the scanners.
 # Produces (all gitignored):
@@ -13,6 +14,14 @@
 #   scripts/decrypt/decrypt/find_all_keys_macos   compiled personal-WeChat scanner
 #   scripts/decrypt/decrypt/find_wecom_keys_macos compiled Enterprise-WeChat scanner
 set -euo pipefail
+
+WITH_FRIDA=0
+for arg in "$@"; do
+  case "$arg" in
+    --with-frida) WITH_FRIDA=1 ;;
+    *) echo "unknown arg: $arg" >&2; exit 2 ;;
+  esac
+done
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV="$HERE/.venv"
@@ -26,6 +35,12 @@ fi
 "$VENV/bin/pip" install --quiet --upgrade pip
 "$VENV/bin/pip" install --quiet -r "$HERE/requirements.txt"
 echo "    deps installed: $("$VENV/bin/pip" freeze | tr '\n' ' ')"
+
+if [ "$WITH_FRIDA" = "1" ]; then
+  echo "==> Installing Frida fallback deps (optional, heavy)"
+  "$VENV/bin/pip" install --quiet -r "$HERE/frida/requirements-frida.txt"
+  echo "    frida installed: $("$VENV/bin/frida" --version 2>/dev/null || echo '?')"
+fi
 
 echo "==> Compiling macOS key scanners (arch: $(uname -m))"
 if [ "$(uname -s)" = "Darwin" ]; then

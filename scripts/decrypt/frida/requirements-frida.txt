@@ -1,0 +1,6 @@
+# Optional — only needed for the Frida hook fallback (frida_extract.py).
+# Heavy native wheel; kept out of the base requirements.txt on purpose.
+# Install with: scripts/decrypt/bootstrap.sh --with-frida
+#           or: <venv>/bin/pip install -r scripts/decrypt/frida/requirements-frida.txt
+frida>=17,<18
+frida-tools>=13
