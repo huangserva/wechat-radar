@@ -5,7 +5,7 @@ import { normalizeDate, normalizeRangeKey, rangeToWindow, type RangeKey } from '
 import { readConfig } from '@/lib/config';
 import { cache, CK } from '@/lib/cache';
 import { buildTopicsForDate } from '@/lib/topics';
-import { refreshDecrypt } from '@/lib/decrypt';
+import { refreshDecrypt, wecomSync } from '@/lib/decrypt';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 1800; // 30 min
@@ -73,6 +73,23 @@ export async function POST(req: NextRequest) {
             send({ type: 'decrypt_done', summary: dec.summary });
           } else {
             send({ type: 'decrypt_error', exitCode: dec.exitCode, error: dec.stderr.slice(0, 500) });
+          }
+
+          // Enterprise WeChat downstream: decrypt latest Messages1 + collect into
+          // collector.db. Personal keys expiring doesn't block wecom (separate
+          // key file), so we attempt regardless and surface failures softly.
+          if (cfg.wecomDbDir && cfg.wecomKeysFile) {
+            send({ type: 'wecom_start' });
+            const wecom = await wecomSync({ cfg });
+            if (wecom.ok) {
+              send({ type: 'wecom_done' });
+            } else {
+              send({
+                type: 'wecom_error',
+                exitCode: wecom.exitCode,
+                error: wecom.stderr.slice(0, 500),
+              });
+            }
           }
         }
 

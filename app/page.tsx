@@ -8,6 +8,7 @@ import TrendChart, { type TrendPoint } from '@/components/TrendChart';
 import ActiveGroupsList, { type ActiveGroup } from '@/components/ActiveGroupsList';
 import CategoryChart, { type CategoryStat } from '@/components/CategoryChart';
 import IntelligenceBrief, { type DashboardIntelligence } from '@/components/IntelligenceBrief';
+import KeyExpiredBanner from '@/components/KeyExpiredBanner';
 import { AlertTriangle, BellDot } from 'lucide-react';
 
 type StatsResponse = {
@@ -45,6 +46,14 @@ export default function Page() {
   const [setupChecked, setSetupChecked] = useState(false);
   const [stewardState, setStewardState] = useState<StewardTodoState | null>(null);
 
+  // Decrypt integration state (Track B frontend; consumes SSE events that Track A
+  // emits from the rescan route + the decrypt capability block from /api/setup).
+  // All fields degrade gracefully when the backend hasn't landed them yet.
+  const [decryptExpired, setDecryptExpired] = useState(false);
+  const [decryptCommand, setDecryptCommand] = useState('');
+  const [decryptScope, setDecryptScope] = useState<'personal' | 'wecom' | 'both'>('personal');
+  const [decryptable, setDecryptable] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -54,6 +63,18 @@ export default function Page() {
         if (!cancelled && j.ok && !j.configured) {
           window.location.href = '/setup';
           return;
+        }
+        // Decrypt capability block (Track A server-side; optional until landed).
+        // Shape: { decrypt?: { enabled, venvReady, keyFresh, wecomKeyFresh,
+        //                       extractCommand, scope } }
+        if (!cancelled && j.decrypt) {
+          const d = j.decrypt;
+          setDecryptable(Boolean(d.enabled && d.venvReady));
+          if (d.extractCommand) setDecryptCommand(d.extractCommand);
+          if (d.scope === 'wecom' || d.scope === 'both') setDecryptScope(d.scope);
+          if (d.enabled && (d.keyFresh === false || d.wecomKeyFresh === false)) {
+            setDecryptExpired(true);
+          }
         }
       } catch {}
       if (!cancelled) setSetupChecked(true);
@@ -107,14 +128,26 @@ export default function Page() {
   }, [setupChecked]);
 
   const runRescan = useCallback(
-    async (full: boolean) => {
+    async (full: boolean, decrypt = false) => {
       setRescanning(true);
-      setRescanInfo(full ? '全量同步启动…（365 天，预计 8-15 分钟）' : '启动重扫…');
+      setRescanInfo(
+        decrypt
+          ? '解密刷新启动…（WAL 增量 + 同步）'
+          : full
+            ? '全量同步启动…（365 天，预计 8-15 分钟）'
+            : '启动重扫…',
+      );
       try {
         const r = await fetch('/api/rescan', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(full ? { full: true } : { range, anchorDate: date }),
+          body: JSON.stringify(
+            decrypt
+              ? { full, decrypt: true }
+              : full
+                ? { full: true }
+                : { range, anchorDate: date },
+          ),
         });
         if (!r.ok || !r.body) {
           setRescanInfo('重扫失败');
@@ -135,7 +168,28 @@ export default function Page() {
             if (!chunk.startsWith('data:')) continue;
             try {
               const evt = JSON.parse(chunk.slice(5).trim());
-              if (evt.type === 'start') {
+              if (evt.type === 'decrypt_start') {
+                setRescanInfo('正在解密并刷新密文 DB…');
+              } else if (evt.type === 'decrypt_done') {
+                setDecryptExpired(false);
+                const s = evt.summary;
+                setRescanInfo(
+                  s
+                    ? `解密完成 · ${s.dbs ?? '?'} DB · ${s.ms ?? '?'}ms，开始同步…`
+                    : '解密完成，开始同步…',
+                );
+              } else if (evt.type === 'decrypt_key_expired') {
+                setDecryptExpired(true);
+                setRescanInfo('密钥已过期，需重新提取（见上方红条）');
+              } else if (evt.type === 'decrypt_error') {
+                setRescanInfo(`解密出错 · 退出码 ${evt.exitCode ?? '?'}`);
+              } else if (evt.type === 'wecom_start') {
+                setRescanInfo('正在同步企业微信消息…');
+              } else if (evt.type === 'wecom_done') {
+                setRescanInfo(`企业微信同步完成，开始入库…`);
+              } else if (evt.type === 'wecom_error') {
+                setRescanInfo(`企业微信同步出错 · 退出码 ${evt.exitCode ?? '?'}`);
+              } else if (evt.type === 'start') {
                 setRescanInfo(`同步 ${evt.groups} 群 · ${evt.since} ~ ${evt.until}`);
               } else if (evt.type === 'progress') {
                 const pct = Math.floor((evt.done / evt.total) * 100);
@@ -166,6 +220,8 @@ export default function Page() {
     [range, date, reload],
   );
 
+  const runDecryptSync = useCallback(() => runRescan(false, true), [runRescan]);
+
   if (!setupChecked) {
     return (
       <div className="flex h-screen items-center justify-center bg-[var(--bg)] text-[12px] text-[var(--text-3)]">
@@ -179,6 +235,13 @@ export default function Page() {
       <Sidebar />
 
       <main className="flex flex-1 flex-col overflow-hidden">
+        {decryptExpired && decryptCommand && (
+          <KeyExpiredBanner
+            command={decryptCommand}
+            scope={decryptScope}
+            onDismiss={() => setDecryptExpired(false)}
+          />
+        )}
         <TopBar
           range={range}
           date={date}
@@ -187,6 +250,8 @@ export default function Page() {
           rescanning={rescanning}
           onRescan={() => runRescan(false)}
           onFullSync={() => runRescan(true)}
+          onDecryptSync={runDecryptSync}
+          decryptable={decryptable}
           rescanInfo={rescanInfo ?? infoLine(stats)}
         />
 

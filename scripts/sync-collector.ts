@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import Database from 'better-sqlite3';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -46,9 +47,41 @@ function msgTypeName(value: number | string | null): string {
   return String(value ?? '');
 }
 
+// WeCom content_type uses a different encoding than personal WeChat
+// (WeCom text = 2; personal WeChat text = 1). Only applied to `wecom:` ids.
+function wecomMsgTypeName(value: number | string | null): string {
+  const n = Number(value);
+  if (!Number.isNaN(n)) {
+    if (n === 2 || n === 0) return '文本';
+    if (n === 1011 || n === 80 || n === 1022 || n === 105 || n === 38) return '系统';
+    if (n === 1001 || n === 1002 || n === 1003 || n === 1006 || n === 573) return '系统';
+    if (n === 10) return '邮件'; // WeCom email messages (e.g. 人事行政部 <x@…> 关于…)
+    if (n === 31 || n === 14 || n === 132) return '链接/文件';
+    if (n === 3) return '图片';
+    if (n === 34) return '语音';
+    if (n === 43) return '视频';
+    if (n === 47) return '表情';
+    return String(n);
+  }
+  return String(value ?? '');
+}
+
+function isWecomChat(chatroomId: string): boolean {
+  return chatroomId.startsWith('wecom:');
+}
+
+function collectorMsgType(chatroomId: string, value: number | string | null): string {
+  return isWecomChat(chatroomId) ? wecomMsgTypeName(value) : msgTypeName(value);
+}
+
 function numericLocalId(value: number | string | null): number {
   const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
+  if (Number.isFinite(n)) return n;
+  // WeCom local_ids are non-numeric strings like "Messages1/Info.db:12345".
+  // Hash to a stable integer so PRIMARY KEY (chatroom_id, local_id) doesn't
+  // collapse every wecom message in a chat to a single row (local_id=0).
+  // Matches lib/wechat-db-adapter.ts numericLocalId hash for cross-path parity.
+  return Number.parseInt(createHash('md5').update(String(value ?? '')).digest('hex').slice(0, 12), 16);
 }
 
 function formatTime(ts: number): string {
@@ -120,7 +153,7 @@ async function main() {
 
     const messages = rows.map(r => {
       const timestamp = Number(r.msg_time ?? 0);
-      const type = msgTypeName(r.msg_type);
+      const type = collectorMsgType(chatroom_id, r.msg_type as number | string | null);
       const content = (r.content === null || r.content === undefined || Buffer.isBuffer(r.content))
         ? '' : String(r.content).replace(/\u0000/g, '');
       if (timestamp > 0) allDates.add(dateOfTs(timestamp));

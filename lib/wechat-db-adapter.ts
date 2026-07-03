@@ -405,7 +405,7 @@ export async function wxNewMessages(limit = 50): Promise<WxNewMessage[]> {
     return {
       ...message,
       username: row.chatroom_id,
-      chat: row.chatroom_name || contactNames.get(row.chatroom_id) || row.chatroom_id,
+      chat: resolveChatName(row.chatroom_id, row.chatroom_name, contactNames),
     };
   });
 }
@@ -487,7 +487,7 @@ export async function wxSearchMessages(
       const hit: SearchHit = {
         ...message,
         username: row.chatroom_id,
-        chat: row.chatroom_name || contactNames.get(row.chatroom_id) || row.chatroom_id,
+        chat: resolveChatName(row.chatroom_id, row.chatroom_name, contactNames),
         date: dateOfTimestamp(message.timestamp),
       };
       if (pushHit(hits, seen, hit, limit)) usedCollector = true;
@@ -795,6 +795,8 @@ function rawMessageRowToMessage(
       ? nameByRowid.get(row.sender) || String(row.sender)
       : String(row.sender ?? '');
   const sender = senderId === cfg.wechatSelfWxid ? '__self__' : contactNames.get(senderId) || senderId;
+  // Personal-WeChat raw decrypted only — WeCom rows never flow through here
+  // (they arrive via collectorRowToMessage which uses collectorMsgType).
   const type = msgTypeName(row.msg_type);
   // Group raw content is prefixed with "<sender_wxid>:\n"; strip it so group
   // detail / rescan don't persist wxid noise into content.
@@ -816,9 +818,9 @@ function collectorRowToSession(
   fallback?: WxSession,
 ): WxSession {
   const timestamp = Number(row.msg_time ?? fallback?.timestamp ?? 0);
-  const type = msgTypeName(row.msg_type ?? fallback?.last_msg_type);
+  const type = collectorMsgType(row.chatroom_id, row.msg_type ?? fallback?.last_msg_type);
   return {
-    chat: row.chatroom_name || contactNames.get(row.chatroom_id) || fallback?.chat || row.chatroom_id,
+    chat: resolveChatName(row.chatroom_id, row.chatroom_name, contactNames, fallback?.chat),
     chat_type: isGroup(row.chatroom_id) ? 'group' : 'private',
     is_group: isGroup(row.chatroom_id),
     last_msg_type: type,
@@ -833,6 +835,8 @@ function collectorRowToSession(
 
 function sessionRowToSession(row: SessionRow, contactNames: Map<string, string>): WxSession {
   const timestamp = Number(row.last_timestamp ?? 0);
+  // SessionTable is personal-WeChat only — WeCom has no session table, so the
+  // standard (non-wecom) type mapper is correct here.
   const type = msgTypeName(row.last_msg_type);
   const chat = contactNames.get(row.username) || row.username;
   return {
@@ -851,7 +855,7 @@ function sessionRowToSession(row: SessionRow, contactNames: Map<string, string>)
 
 function collectorRowToMessage(row: CollectorMessageRow): WxMessage {
   const timestamp = Number(row.msg_time ?? 0);
-  const type = msgTypeName(row.msg_type);
+  const type = collectorMsgType(row.chatroom_id, row.msg_type);
   return {
     local_id: numericLocalId(row.local_id),
     sender: row.sender || '',
@@ -898,8 +902,82 @@ function msgTypeName(value: number | string | null | undefined): string {
   return String(value ?? '');
 }
 
+/**
+ * WeCom (企业微信) content_type → display label. WeCom collector writes
+ * `content_type` into the same `msg_type` column as personal WeChat, but the
+ * encodings differ (WeCom text = 2, personal WeChat text = 1). This mapping is
+ * only applied to rows whose chatroom_id is a `wecom:` synthetic id, so
+ * personal-WeChat rows are unaffected.
+ */
+function wecomMsgTypeName(value: number | string | null | undefined): string {
+  const n = Number(value);
+  if (!Number.isNaN(n)) {
+    if (n === 2 || n === 0) return '文本'; // WeCom text / short status text
+    if (n === 1011 || n === 80 || n === 1022 || n === 105 || n === 38) return '系统';
+    if (n === 1001 || n === 1002 || n === 1003 || n === 1006 || n === 573) return '系统';
+    if (n === 10) return '邮件'; // WeCom email messages (e.g. 人事行政部 <x@…> 关于…)
+    if (n === 31 || n === 14 || n === 132) return '链接/文件';
+    if (n === 3) return '图片';
+    if (n === 34) return '语音';
+    if (n === 43) return '视频';
+    if (n === 47) return '表情';
+    return String(n);
+  }
+  return String(value ?? '');
+}
+
+function isWecomChat(chatroomId: string): boolean {
+  return chatroomId.startsWith('wecom:');
+}
+
+/**
+ * Resolve a readable display name for a WeCom synthetic chat. WeCom_collector
+ * writes the raw `wecom:<type>:<conv>:<fw>` id as the chat name when no real
+ * conversation name was decoded — that raw id is opaque to a human. Fall back to
+ * a readable label ("企业微信群 <short>") derived from the conv-id tail.
+ * A non-placeholder name (anything not starting with `wecom:`) is kept as-is.
+ */
+function wecomDisplayName(chatroomId: string, rawName: string | null | undefined): string {
+  if (rawName && !rawName.startsWith('wecom:')) return rawName;
+  const parts = chatroomId.split(':'); // ['wecom', '<type>', '<conv_id>', '<fw>']
+  const convId = parts[2] || chatroomId;
+  const short = convId.slice(-8);
+  const type = parts[1];
+  if (type === '1') return `企业微信群 ${short}`;
+  if (type === '3') return `企业微信应用 ${short}`;
+  return `企业微信 ${short}`;
+}
+
+/**
+ * Source-aware chat-name resolver. Personal-WeChat ids resolve via contacts as
+ * before; WeCom ids route through {@link wecomDisplayName} so placeholder names
+ * never leak the raw synthetic id into the UI.
+ */
+function resolveChatName(
+  chatroomId: string,
+  rawName: string | null | undefined,
+  contactNames: Map<string, string>,
+  fallback?: string,
+): string {
+  if (isWecomChat(chatroomId)) {
+    return wecomDisplayName(chatroomId, rawName || contactNames.get(chatroomId) || fallback);
+  }
+  return rawName || contactNames.get(chatroomId) || fallback || chatroomId;
+}
+
+/** Pick the correct type mapper for a collector row based on its chat source. */
+function collectorMsgType(chatroomId: string, value: number | string | null | undefined): string {
+  return isWecomChat(chatroomId) ? wecomMsgTypeName(value) : msgTypeName(value);
+}
+
+/**
+ * A chat is a group if it's a personal-WeChat `@chatroom` id, or a WeCom
+ * synthetic id whose conversation-type segment is 1 (`wecom:1:<conv>:<fw>`).
+ * WeCom conv-type 0 = private, 3 = system/app — those stay non-group.
+ */
 function isGroup(username: string): boolean {
-  return username.endsWith('@chatroom');
+  if (username.endsWith('@chatroom')) return true;
+  return /^wecom:1:/.test(username);
 }
 
 function numericLocalId(value: number | string | null | undefined): number {

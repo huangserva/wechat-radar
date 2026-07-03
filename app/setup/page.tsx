@@ -1,13 +1,25 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { CheckCircle2, Database, ShieldCheck, UserRound, Wrench } from 'lucide-react';
+import { CheckCircle2, Database, ShieldCheck, UserRound, Wrench, KeyRound } from 'lucide-react';
+
+type DecryptCapability = {
+  enabled?: boolean;
+  venvReady?: boolean;
+  keyFresh?: boolean | null;
+  wecomKeyFresh?: boolean | null;
+  needsSudo?: boolean;
+  needsFullDiskAccess?: boolean;
+  extractCommand?: string;
+  scope?: 'personal' | 'wecom' | 'both';
+};
 
 type SetupStatus = {
   ok: boolean;
   dataDir: string;
   configured: boolean;
   suggestedNicknames?: string[];
+  decrypt?: DecryptCapability;
   config: {
     myNicknames: string[];
     demoMode: boolean;
@@ -142,6 +154,30 @@ export default function SetupPage() {
               <span>我理解聊天数据会存储在本地 SQLite 中，不会自动上传；我会自行确认数据读取和处理符合相关规则。</span>
             </label>
           </section>
+
+          {status?.decrypt && status.decrypt.enabled !== undefined && (
+            <section className="card p-5 lg:col-span-2">
+              <SectionTitle icon={<KeyRound size={15} />} title="解密能力（密文 DB → 明文）" />
+              <p className="mt-2 text-[11px] leading-relaxed text-[var(--text-3)]">
+                radar 只编排解密子进程，不代跑 sudo。密钥 json / 解密后 DB / venv
+                均在本地、已 gitignore，不会入库。
+              </p>
+              <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-1 lg:grid-cols-4">
+                <CheckRow label="Python venv" ok={status.decrypt.venvReady ?? false} detail={status.decrypt.venvReady ? '就绪' : '未安装'} />
+                <CheckRow label="个人微信密钥" ok={status.decrypt.keyFresh !== false} detail={keyFreshDetail(status.decrypt.keyFresh)} />
+                <CheckRow label="企业微信密钥" ok={status.decrypt.wecomKeyFresh !== false} detail={keyFreshDetail(status.decrypt.wecomKeyFresh)} />
+                <CheckRow label="Full Disk Access" ok={!status.decrypt.needsFullDiskAccess} detail={status.decrypt.needsFullDiskAccess ? '需授权' : '已授权'} />
+              </div>
+              {status.decrypt.needsSudo && status.decrypt.extractCommand && (
+                <div className="mt-3 rounded-md border border-[var(--border-soft)] bg-[var(--chrome-bg)] px-3 py-2">
+                  <div className="text-[11px] text-[var(--text-3)]">密钥提取需在终端手动运行（sudo + 微信在运行）：</div>
+                  <code className="mt-1 block overflow-x-auto font-mono text-[11px] text-[var(--text-2)]">
+                    {status.decrypt.extractCommand}
+                  </code>
+                </div>
+              )}
+            </section>
+          )}
         </div>
 
         {error && <div className="mt-4 text-[13px] text-[var(--danger)]">{error}</div>}
@@ -191,4 +227,9 @@ function isPlaceholderNickname(name: string): boolean {
     .replace(/[\s[\]【】()（）<>《》"'“”‘’]/g, '')
     .toLowerCase();
   return ['你的微信名', '微信名', 'yourwechatname', 'yourname'].includes(normalized);
+}
+
+function keyFreshDetail(fresh: boolean | null | undefined): string {
+  if (fresh === null || fresh === undefined) return '未配置';
+  return fresh ? '新鲜' : '已过期';
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { Calendar, RefreshCw, Database } from 'lucide-react';
+import { Calendar, RefreshCw, Database, KeyRound } from 'lucide-react';
 import GlobalSearch from './GlobalSearch';
 
 export type RangeKey = 'day' | 'week' | 'month' | 'quarter' | 'year' | 'custom';
@@ -21,6 +21,8 @@ export default function TopBar({
   rescanning,
   onRescan,
   onFullSync,
+  onDecryptSync,
+  decryptable,
   rescanInfo,
 }: {
   range: RangeKey;
@@ -30,6 +32,8 @@ export default function TopBar({
   rescanning: boolean;
   onRescan: () => void;
   onFullSync?: () => void;
+  onDecryptSync?: () => void;
+  decryptable?: boolean;
   rescanInfo?: string;
 }) {
   return (
@@ -75,6 +79,18 @@ export default function TopBar({
           >
             <Database size={13} />
             <span>全量同步</span>
+          </button>
+        )}
+
+        {onDecryptSync && (
+          <button
+            className="btn"
+            onClick={onDecryptSync}
+            disabled={rescanning || !decryptable}
+            title="先解密刷新（WAL 增量 ~70ms/DB）再同步——密钥需未过期且 venv 就绪"
+          >
+            <KeyRound size={13} />
+            <span>解密并刷新</span>
           </button>
         )}
 

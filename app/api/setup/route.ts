@@ -6,6 +6,7 @@ import { DATA_DIR, configStatus, writeConfig, isPlaceholderNickname } from '@/li
 import { seedDemoData } from '@/lib/demo-data';
 import { wxAvailable, wxDaemonStatus } from '@/lib/wx';
 import { wxDbAvailable, wxDbPaths } from '@/lib/wechat-db-adapter';
+import { decryptStatus, personalKeyExtractCommand } from '@/lib/decrypt';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,11 +21,34 @@ export async function GET() {
   const [wxInstalled, daemon] = await Promise.all([wxAvailable(), wxDaemonStatus()]);
   const status = configStatus();
   const paths = wxDbPaths();
+  const toolchain = decryptStatus(status.config);
+  // Key freshness heuristic: a key json modified within 24h is "fresh" (WeChat
+  // hasn't been restarted since extraction). null mtime = file absent.
+  const STALE_AFTER_S = 24 * 60 * 60;
+  const nowS = Math.floor(Date.now() / 1000);
+  const personalFresh = toolchain.keys.personal.exists
+    ? toolchain.keys.personal.mtime !== null && nowS - toolchain.keys.personal.mtime < STALE_AFTER_S
+    : null;
+  const wecomFresh = toolchain.keys.wecom.exists
+    ? toolchain.keys.wecom.mtime !== null && nowS - toolchain.keys.wecom.mtime < STALE_AFTER_S
+    : null;
   return NextResponse.json({
     ok: true,
     ...status,
     dataDir: DATA_DIR,
     suggestedNicknames: suggestNicknames(status.config.wechatSelfWxid, paths.contactDb),
+    decrypt: {
+      enabled: status.config.decryptEnabled,
+      venvReady: toolchain.pythonVenv,
+      keyFresh: personalFresh,
+      wecomKeyFresh: wecomFresh,
+      needsSudo:
+        (!toolchain.keys.personal.exists && Boolean(status.config.keysFile)) ||
+        (!toolchain.keys.wecom.exists && Boolean(status.config.wecomKeysFile)),
+      needsFullDiskAccess: false, // not detectable from server-side; UI shows hint
+      extractCommand: personalKeyExtractCommand(status.config),
+      scope: 'personal',
+    },
     checks: {
       wxInstalled,
       wxDaemonRunning: daemon.running,
