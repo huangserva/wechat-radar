@@ -5,6 +5,7 @@ import { normalizeDate, normalizeRangeKey, rangeToWindow, type RangeKey } from '
 import { readConfig } from '@/lib/config';
 import { cache, CK } from '@/lib/cache';
 import { buildTopicsForDate } from '@/lib/topics';
+import { refreshDecrypt } from '@/lib/decrypt';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 1800; // 30 min
@@ -15,6 +16,7 @@ interface RescanBody {
   since?: string;
   until?: string;
   full?: boolean; // 一键全量：1 年
+  decrypt?: boolean; // 同步前先跑 refresh_decrypt WAL 增量刷新（覆盖 config.decryptEnabled）
 }
 
 export async function POST(req: NextRequest) {
@@ -58,6 +60,22 @@ export async function POST(req: NextRequest) {
       send({ type: 'start', scope, since, until, groups: targets.length });
 
       try {
+        // Optional: freshen decrypted DBs (WAL-incremental ~70ms/DB) before sync.
+        // radar never runs sudo here — key extraction is a separate user step.
+        if (body.decrypt ?? cfg.decryptEnabled) {
+          send({ type: 'decrypt_start' });
+          const dec = await refreshDecrypt({ full: body.full });
+          if (dec.keyExpired) {
+            // Keys stale (WeChat restarted). Old decrypted DBs are still valid,
+            // so we surface the signal and continue syncing existing data.
+            send({ type: 'decrypt_key_expired', exitCode: dec.exitCode });
+          } else if (dec.ok) {
+            send({ type: 'decrypt_done', summary: dec.summary });
+          } else {
+            send({ type: 'decrypt_error', exitCode: dec.exitCode, error: dec.stderr.slice(0, 500) });
+          }
+        }
+
         const result = await syncFullHistory({
           targets,
           since,

@@ -44,3 +44,18 @@ AGENTS.md
 
 # Playwright MCP worker artifacts
 .playwright-mcp/
+
+# decrypt toolchain — NEVER commit keys, decrypted DBs, venv, or generated config.
+# The keys are plaintext AES keys; decrypted DBs and config may embed PII/paths.
+scripts/decrypt/.venv/
+scripts/decrypt/**/__pycache__/
+*_keys.json
+all_keys.json
+wecom_keys.json
+*key*.json
+config.yaml
+config.local.yaml
+config.*.local.yaml
+# compiled key scanners (arch-specific, built locally by bootstrap.sh)
+scripts/decrypt/decrypt/find_all_keys_macos
+scripts/decrypt/decrypt/find_wecom_keys_macos
