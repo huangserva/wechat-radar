@@ -6,7 +6,7 @@ import { DATA_DIR, configStatus, writeConfig, isPlaceholderNickname } from '@/li
 import { seedDemoData } from '@/lib/demo-data';
 import { wxAvailable, wxDaemonStatus } from '@/lib/wx';
 import { wxDbAvailable, wxDbPaths } from '@/lib/wechat-db-adapter';
-import { decryptStatus, personalKeyExtractCommand } from '@/lib/decrypt';
+import { decryptStatus, personalKeyExtractCommand, keyExtractStrategies } from '@/lib/decrypt';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,6 +48,14 @@ export async function GET() {
       needsFullDiskAccess: false, // not detectable from server-side; UI shows hint
       extractCommand: personalKeyExtractCommand(status.config),
       scope: 'personal',
+      keyExtraction: {
+        needsFridaFallback: toolchain.needsFridaFallback,
+        fridaAvailable: toolchain.scripts.fridaHook && toolchain.scripts.fridaDriver,
+        // Personal-WeChat strategy chain (memory-scan → frida → match-keys).
+        // Wecom is covered by needsFridaFallback.wecom; its strategies share the
+        // same shape if needed later.
+        strategies: keyExtractStrategies(status.config, 'personal'),
+      },
     },
     checks: {
       wxInstalled,

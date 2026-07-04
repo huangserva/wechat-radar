@@ -48,6 +48,7 @@ AGENTS.md
 # decrypt toolchain — NEVER commit keys, decrypted DBs, venv, or generated config.
 # The keys are plaintext AES keys; decrypted DBs and config may embed PII/paths.
 scripts/decrypt/.venv/
+scripts/decrypt/**/.venv/
 scripts/decrypt/**/__pycache__/
 *_keys.json
 all_keys.json

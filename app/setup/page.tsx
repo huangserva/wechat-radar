@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { CheckCircle2, Database, ShieldCheck, UserRound, Wrench, KeyRound } from 'lucide-react';
+import KeyExtractionStrategyCard, { type KeyExtractionState } from '@/components/KeyExtractionStrategyCard';
 
 type DecryptCapability = {
   enabled?: boolean;
@@ -12,6 +13,8 @@ type DecryptCapability = {
   needsFullDiskAccess?: boolean;
   extractCommand?: string;
   scope?: 'personal' | 'wecom' | 'both';
+  /** M8 Frida fallback strategy state (Track A lands the server-side fields). */
+  keyExtraction?: KeyExtractionState;
 };
 
 type SetupStatus = {
@@ -177,6 +180,10 @@ export default function SetupPage() {
                 </div>
               )}
             </section>
+          )}
+
+          {status?.decrypt?.enabled && status.decrypt.keyExtraction && (
+            <KeyExtractionStrategyCard state={status.decrypt.keyExtraction} />
           )}
         </div>
 
